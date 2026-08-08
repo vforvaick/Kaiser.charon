@@ -241,8 +241,10 @@ export async function refreshPosition(position, { autoExit = true, jupiterPnl = 
         // O4 / P1-b: reconcile recorded balance against the on-chain wallet before selling.
         // If a prior partial sell landed but threw (network/RPC), token_amount_raw is stale and
         // re-selling from it would double-sell. Sync to wallet truth; if already reduced, done.
+        // fetchLiveTokenBalance returns null ONLY on RPC failure (then we can't verify, fall through).
+        // A real "0" returns the string "0" - that's authoritative and lower than recorded.
         const walletBalance = await fetchLiveTokenBalance(position.mint);
-        if (Number(walletBalance) > 0 && Number(walletBalance) < recorded) {
+        if (walletBalance !== null && Number(walletBalance) < recorded) {
           console.log(`[position] ${position.id} partial TP reconcile: wallet ${walletBalance} < recorded ${recorded}, prior sell landed — marking done`);
           db.prepare('UPDATE dry_run_positions SET partial_tp_done = 1, token_amount_raw = ? WHERE id = ?').run(String(Number(walletBalance)), position.id);
         } else {
