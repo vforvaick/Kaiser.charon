@@ -208,7 +208,7 @@ export async function refreshPosition(position, { autoExit = true, jupiterPnl = 
   const entryMcap = Number(position.entry_mcap) || 0;
   const isMicrocap = entryMcap > 0 && entryMcap < 15000;
   const isHighcap = entryMcap >= 60000;
-  let effectiveMaxHold = strat?.max_hold_ms ?? 0;
+  const effectiveMaxHold = strat?.max_hold_ms ?? 0;
   // === AUDIT MODE: tiered max_hold disabled for 3-day data collection (2026-07-05) ===
   // if (isMicrocap) {
   //   effectiveMaxHold = 600000; // 10 min for microcap <15K
@@ -234,25 +234,26 @@ export async function refreshPosition(position, { autoExit = true, jupiterPnl = 
 
   // Partial TP check
   if (!exitReason && strat?.partial_tp && !position.partial_tp_done && pnlPercent >= strat.partial_tp_at_percent) {
-    db.prepare('UPDATE dry_run_positions SET partial_tp_done = 1 WHERE id = ?').run(position.id);
     console.log(`[position] ${position.id} partial TP at ${pnlPercent.toFixed(1)}% (${strat.partial_tp_sell_percent}% sell)`);
     if (position.execution_mode === 'live' && position.token_amount_raw) {
       try {
         const sellAmount = Math.floor(Number(position.token_amount_raw) * (strat.partial_tp_sell_percent / 100));
         if (sellAmount > 0) {
           const sell = await executeLiveSell({ ...position, token_amount_raw: String(sellAmount) }, 'PARTIAL_TP');
-          const remaining = Number(position.token_amount_raw) - sellAmount;
-          db.prepare('UPDATE dry_run_positions SET token_amount_raw = ? WHERE id = ?').run(String(remaining), position.id);
+          // O4: only mark partial_tp_done AFTER the sell succeeds, so a failed partial sell
+          // retries on the next monitor pass instead of stranding the unsold remainder.
+          db.prepare('UPDATE dry_run_positions SET partial_tp_done = 1, token_amount_raw = ? WHERE id = ?').run(
+            String(Number(position.token_amount_raw) - sellAmount), position.id);
           db.prepare(`
             INSERT INTO dry_run_trades (position_id, mint, side, at_ms, price, mcap, size_sol, token_amount_est, reason, payload_json)
             VALUES (?, ?, 'sell', ?, ?, ?, ?, ?, 'PARTIAL_TP', ?)
           `).run(position.id, position.mint, now(), price, mcap,
             position.size_sol * (strat.partial_tp_sell_percent / 100), sellAmount,
-            json({ pnlPercent, sell, partialSellPercent: strat.partial_tp_sell_percent, remaining }));
-          console.log(`[position] ${position.id} partial TP sold ${sellAmount} tokens, ${remaining} remaining`);
+            json({ pnlPercent, sell, partialSellPercent: strat.partial_tp_sell_percent, remaining: Number(position.token_amount_raw) - sellAmount }));
+          console.log(`[position] ${position.id} partial TP sold ${sellAmount} tokens, ${Number(position.token_amount_raw) - sellAmount} remaining`);
         }
       } catch (err) {
-        console.log(`[position] ${position.id} partial sell failed: ${err.message}`);
+        console.log(`[position] ${position.id} partial sell failed (will retry): ${err.message}`);
       }
     }
   }
