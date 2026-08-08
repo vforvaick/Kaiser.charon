@@ -45,7 +45,11 @@ export async function fetchLiveTokenBalance(mint) {
       { mint: new PublicKey(mint) },
       'confirmed',
     );
-    return accounts.value[0]?.account?.data?.parsed?.info?.tokenAmount?.amount || null;
+    // Distinguish "RPC ok, zero/no account" from "RPC failed". A successful query with no
+    // token account or a zero amount is a real "0"; only return null on actual failure so
+    // callers (partial-TP reconcile, retry reconcile) can tell wallet-truth from unverifiable.
+    const amt = accounts.value[0]?.account?.data?.parsed?.info?.tokenAmount?.amount;
+    return amt != null ? String(amt) : '0';
   } catch (err) {
     console.log(`[live] token balance ${mint.slice(0, 8)}... ${err.message}`);
     return null;
