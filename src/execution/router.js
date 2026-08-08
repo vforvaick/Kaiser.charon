@@ -163,7 +163,9 @@ export async function executeConfirmedIntent(chatId, intentId) {
     }
     // O1: swap+insert under the entry lock with an authoritative pre-swap guard, so the
     // confirm path can't bypass max-positions / dedup the way it did when it swapped first.
-    const { swap, balance, amountLamports } = await withEntryLock(async () => {
+    // createLivePosition MUST stay inside the lock: releasing after swap-but-before insert
+    // would let a concurrent entry pass checkEntryGuards and duplicate-swap.
+    const result = await withEntryLock(async () => {
       const guard = checkEntryGuards(freshRow.candidate.token.mint);
       if (!guard.allowed) {
         throw new Error(`Entry blocked pre-swap: ${guard.reason}${guard.blockedById ? ` (#${guard.blockedById})` : ''}`);
@@ -182,9 +184,9 @@ export async function executeConfirmedIntent(chatId, intentId) {
       if (!s.outputAmount) {
         s.outputAmount = await fetchLiveTokenBalance(freshRow.candidate.token.mint) || s.outputAmount;
       }
-      return { swap: s, balance: bal, amountLamports: amt };
+      const { id: positionId, isNew } = createLivePosition(intent.candidate_id, freshRow.candidate, decision, s, `confirmed_intent_${intentId}`);
+      return { positionId, isNew, swap: s, balance: bal, amountLamports: amt };
     });
-    const { id: positionId, isNew } = createLivePosition(intent.candidate_id, freshRow.candidate, decision, swap, `confirmed_intent_${intentId}`);
     db.prepare('UPDATE trade_intents SET status = ?, updated_at_ms = ? WHERE id = ?').run('executed_live', now(), intentId);
     logDecisionEvent({
       batchId: null,
@@ -194,10 +196,10 @@ export async function executeConfirmedIntent(chatId, intentId) {
       decision,
       mode: 'live',
       action: 'confirmed_intent_executed',
-      guardrails: { balanceLamports: balance, amountLamports, intentId },
-      execution: { positionId, isNew, swap },
+      guardrails: { balanceLamports: result.balance, amountLamports: result.amountLamports, intentId },
+      execution: { positionId: result.positionId, isNew: result.isNew, swap: result.swap },
     });
-    if (isNew) return sendPositionOpen(positionId);
+    if (result.isNew) return sendPositionOpen(result.positionId);
   } catch (err) {
     db.prepare('UPDATE trade_intents SET status = ?, updated_at_ms = ? WHERE id = ?').run('execution_failed', now(), intentId);
     return bot.sendMessage(chatId, `Live execution failed: ${escapeHtml(err.message)}`, { parse_mode: 'HTML' });
