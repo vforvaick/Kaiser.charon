@@ -30,3 +30,10 @@ dashboard/
 test_migration_with_key.js
 close_all.js
 backup_trenches_pause.js
+
+# Agent session artifacts — never commit
+.pi-subagents/
+.scratch/
+
+# Doppler local link (recreated per-clone via `doppler setup`)
+.doppler.yaml

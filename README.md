@@ -59,6 +59,24 @@ The SQLite database is created automatically at `DB_PATH` on first run. Nothing 
 
 If `npm install` fails on `better-sqlite3` or `canvas`, it's the native build — install the build tools listed above and retry.
 
+## Secrets via Doppler (recommended)
+
+Secrets are managed in [Doppler](https://www.doppler.com/) project `charon`, not a committed `.env`. After cloning:
+
+```bash
+npm install
+doppler setup --project charon --config dev   # links this checkout to the charon project
+npm run check
+```
+
+Then boot locally with secrets injected:
+
+```bash
+doppler run -- npm start
+```
+
+`.env.example` remains as documentation of every variable the bot reads; copy values into Doppler rather than into a local `.env`.
+
 ## Configuration
 
 `.env.example` documents every environment variable the bot reads. The ones without a default are the ones you actually have to fill in; the rest have sane values already.
@@ -72,9 +90,22 @@ Optional subsystems are off by default and stay off until you set their flag:
 
 Strategy parameters live in SQLite, not `.env`, and are hot-read — most tuning happens from the Telegram chat without restarts. API keys and RPC URLs are env values, so those need a restart.
 
-## Usage
+## Deployment (PM2, 24/7)
 
-Run it, open Telegram, `/menu`.
+On the VPS, run under PM2 with Doppler injecting secrets. The `ecosystem.config.cjs` is committed; secrets never are.
+
+```bash
+cd ~/prod/Kaiser.charon
+git pull
+npm ci
+doppler setup --project charon --config dev
+mkdir -p logs
+doppler run -- pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup   # follow the printed one-liner to enable boot persistence
+```
+
+Logs: `pm2 logs charon --lines 100`. Restart: `doppler run -- pm2 restart charon`.
 
 Start with `TRADING_MODE=dry_run`. Watch it for a week. Dry-run now uses executable Jupiter quotes for both entry and exit, but it is still an estimate: RPC/API failures can trigger fallbacks and live swaps add wallet state, confirmation, and timing risk. Only then decide if live is worth it.
 
