@@ -4,9 +4,6 @@ import sqlite3 from 'better-sqlite3';
 // Ensure standalone reporter executions never trigger Telegram polling listeners (prevents 409 Conflict)
 process.env.DISABLE_TELEGRAM_POLLING = 'true';
 
-import { bot } from '../src/telegram/bot.js';
-import { TELEGRAM_CHAT_ID } from '../src/config.js';
-
 const MATRIX_CELLS = [
   { id: 'sniper-llm', strategy: 'sniper', useLlm: true, dbPath: './data/sniper_llm.sqlite' },
   { id: 'sniper-rules', strategy: 'sniper', useLlm: false, dbPath: './data/sniper_rules.sqlite' },
@@ -70,12 +67,15 @@ export function generateMatrixReport(metricsList) {
   return lines.join('\n\n');
 }
 
-export async function runMatrixReporter(chatId = TELEGRAM_CHAT_ID) {
+export async function runMatrixReporter(chatId = null) {
+  const { bot } = await import('../src/telegram/bot.js');
+  const { TELEGRAM_CHAT_ID } = await import('../src/config.js');
+  const targetChatId = chatId || TELEGRAM_CHAT_ID;
   const metrics = MATRIX_CELLS.map(collectCellMetrics);
   const text = generateMatrixReport(metrics);
   console.log(text);
-  if (chatId && bot) {
-    await bot.sendMessage(chatId, text, { parse_mode: 'HTML' }).catch(err => console.error('[reporter] telegram send failed:', err.message));
+  if (targetChatId && bot) {
+    await bot.sendMessage(targetChatId, text, { parse_mode: 'HTML' }).catch(err => console.error('[reporter] telegram send failed:', err.message));
   }
 }
 
