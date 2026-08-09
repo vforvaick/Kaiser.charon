@@ -104,10 +104,10 @@ mkdir -p data logs
 # Bootstrap canary DBs and start 2-cell canary (Sniper LLM vs Sniper Rules)
 doppler run -- node scripts/bootstrap_matrix_db.js --strategy sniper --use-llm true --db-path ./data/canary_sniper_llm.sqlite
 doppler run -- node scripts/bootstrap_matrix_db.js --strategy sniper --use-llm false --db-path ./data/canary_sniper_rules.sqlite
-doppler run -- pm2 start ecosystem.canary.config.js
+doppler run -- pm2 start ecosystem.canary.config.cjs
 
 # Or start full 8-cell matrix
-# doppler run -- pm2 start ecosystem.matrix.config.js
+# doppler run -- pm2 start ecosystem.matrix.config.cjs
 
 pm2 save
 ```
