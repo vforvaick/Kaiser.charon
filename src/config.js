@@ -13,6 +13,9 @@ export const SOL_MINT = 'So11111111111111111111111111111111111111111';
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 export const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 export const TELEGRAM_TOPIC_ID = process.env.TELEGRAM_TOPIC_ID;
+export const DISABLE_TELEGRAM_POLLING = process.env.DISABLE_TELEGRAM_POLLING === 'true' || process.env.DISABLE_TELEGRAM_POLLING === '1';
+export const ACTIVE_STRATEGY_ID = process.env.ACTIVE_STRATEGY_ID || '';
+export const FORCE_USE_LLM = process.env.FORCE_USE_LLM; // 'true' | 'false' | undefined
 export const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 export const GMGN_API_KEY = process.env.GMGN_API_KEY;
 export const GMGN_ENABLED = process.env.GMGN_ENABLED !== 'false';

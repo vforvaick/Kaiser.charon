@@ -1,5 +1,5 @@
 import { bot } from './bot.js';
-import { TELEGRAM_CHAT_ID } from '../config.js';
+import { TELEGRAM_CHAT_ID, DISABLE_TELEGRAM_POLLING } from '../config.js';
 import { now, json } from '../utils.js';
 import { escapeHtml, fmtPct } from '../format.js';
 import { db } from '../db/connection.js';
@@ -239,6 +239,10 @@ export async function toggleTrailing(chatId, id, query = null) {
 }
 
 export function setupTelegram() {
+  if (DISABLE_TELEGRAM_POLLING) {
+    console.log('[telegram] polling disabled (worker mode)');
+    return;
+  }
   bot.setMyCommands([
     { command: 'menu', description: 'Open Charon menu' },
     { command: 'strategy', description: 'Show/switch strategy' },

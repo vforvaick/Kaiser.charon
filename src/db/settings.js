@@ -25,17 +25,28 @@ const strategyCache = { id: null, config: null, at: 0 };
 
 export function activeStrategy() {
   if (strategyCache.config && Date.now() - strategyCache.at < 5000) return strategyCache.config;
-  const row = db.prepare('SELECT * FROM strategies WHERE enabled = 1 LIMIT 1').get();
+  const envStratId = process.env.ACTIVE_STRATEGY_ID;
+  const row = envStratId
+    ? db.prepare('SELECT * FROM strategies WHERE id = ?').get(envStratId)
+    : db.prepare('SELECT * FROM strategies WHERE enabled = 1 LIMIT 1').get();
   if (!row) {
-    const fallback = strategyById('sniper');
-    if (fallback) return fallback;
-    return defaultStrategy();
+    const fallback = strategyById(envStratId || 'sniper');
+    if (fallback) return applyStrategyOverrides(fallback);
+    return applyStrategyOverrides(defaultStrategy());
   }
-  const config = { id: row.id, name: row.name, ...JSON.parse(row.config_json) };
+  const config = applyStrategyOverrides({ id: row.id, name: row.name, ...JSON.parse(row.config_json) });
   strategyCache.id = row.id;
   strategyCache.config = config;
   strategyCache.at = Date.now();
   return config;
+}
+
+function applyStrategyOverrides(strat) {
+  if (process.env.FORCE_USE_LLM !== undefined) {
+    const forced = process.env.FORCE_USE_LLM === 'true' || process.env.FORCE_USE_LLM === '1';
+    return { ...strat, use_llm: forced };
+  }
+  return strat;
 }
 
 export function strategyById(id) {
