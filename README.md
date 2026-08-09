@@ -90,22 +90,29 @@ Optional subsystems are off by default and stay off until you set their flag:
 
 Strategy parameters live in SQLite, not `.env`, and are hot-read — most tuning happens from the Telegram chat without restarts. API keys and RPC URLs are env values, so those need a restart.
 
-## Deployment (PM2, 24/7)
+## Deployment (PM2, 24/7 Benchmark Matrix)
 
-On the VPS, run under PM2 with Doppler injecting secrets. The `ecosystem.config.cjs` is committed; secrets never are.
+On the VPS, run under PM2 with Doppler injecting secrets.
 
 ```bash
 cd ~/prod/Kaiser.charon
 git pull
 npm ci
 doppler setup --project charon --config dev
-mkdir -p logs
-doppler run -- pm2 start ecosystem.config.cjs
+mkdir -p data logs
+
+# Bootstrap canary DBs and start 2-cell canary (Sniper LLM vs Sniper Rules)
+doppler run -- node scripts/bootstrap_matrix_db.js --strategy sniper --use-llm true --db-path ./data/canary_sniper_llm.sqlite
+doppler run -- node scripts/bootstrap_matrix_db.js --strategy sniper --use-llm false --db-path ./data/canary_sniper_rules.sqlite
+doppler run -- pm2 start ecosystem.canary.config.js
+
+# Or start full 8-cell matrix
+# doppler run -- pm2 start ecosystem.matrix.config.js
+
 pm2 save
-pm2 startup   # follow the printed one-liner to enable boot persistence
 ```
 
-Logs: `pm2 logs charon --lines 100`. Restart: `doppler run -- pm2 restart charon`.
+Logs: `pm2 logs --lines 100`. Matrix Report: `doppler run -- node scripts/matrix_reporter.js`.
 
 Start with `TRADING_MODE=dry_run`. Watch it for a week. Dry-run now uses executable Jupiter quotes for both entry and exit, but it is still an estimate: RPC/API failures can trigger fallbacks and live swaps add wallet state, confirmation, and timing risk. Only then decide if live is worth it.
 
