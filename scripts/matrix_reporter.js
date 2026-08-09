@@ -1,6 +1,9 @@
 import fs from 'fs';
-import path from 'path';
 import sqlite3 from 'better-sqlite3';
+
+// Ensure standalone reporter executions never trigger Telegram polling listeners (prevents 409 Conflict)
+process.env.DISABLE_TELEGRAM_POLLING = 'true';
+
 import { bot } from '../src/telegram/bot.js';
 import { TELEGRAM_CHAT_ID } from '../src/config.js';
 
@@ -77,5 +80,8 @@ export async function runMatrixReporter(chatId = TELEGRAM_CHAT_ID) {
 }
 
 if (process.argv[1] && process.argv[1].endsWith('matrix_reporter.js')) {
-  runMatrixReporter();
+  runMatrixReporter().then(() => process.exit(0)).catch((err) => {
+    console.error('[reporter] fatal:', err);
+    process.exit(1);
+  });
 }
