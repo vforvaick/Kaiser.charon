@@ -23,6 +23,11 @@ win/loss size asymmetry, session/time windows, and sample span.
 Only then state the recommendation with the evidence that supports it.
 This prevents misdirected debugging and wasted cycles on the wrong fix.
 
+## Critical Gotchas (PM2 & Doppler)
+
+- **PM2 env refresh trap**: `pm2 restart <app> --update-env` does NOT re-fetch Doppler secrets; it reuses stale env. To apply new Doppler secrets: `pm2 delete ecosystem.matrix.config.cjs && doppler run -- pm2 start ecosystem.matrix.config.cjs && pm2 save`. (ADR-0002)
+- **Omniroute non-stream requirement**: Omniroute multi-model combos (scout/code-low) default to SSE streaming. `src/pipeline/llm.js` MUST set `stream: false` in the body payload, otherwise axios hangs 25s waiting for a non-stream response. (ADR-0002)
+
 ## Agent skills
 
 ### Issue tracker
