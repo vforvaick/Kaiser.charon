@@ -22,7 +22,7 @@ export function normalizeDecision(parsed, fallbackReason = '', route = '') {
   let verdict = ['BUY', 'WATCH', 'PASS'].includes(String(parsed?.verdict).toUpperCase())
     ? String(parsed.verdict).toUpperCase()
     : 'WATCH';
-  let confidence = Math.max(0, Math.min(100, Number(parsed?.confidence) || 0));
+  const confidence = Math.max(0, Math.min(100, Number(parsed?.confidence) || 0));
 
   // Block unprofitable routes entirely
   if (verdict === 'BUY' && BLOCKED_ROUTES.some(br => String(route).includes(br))) {
@@ -272,6 +272,7 @@ export async function decideCandidateBatch(rows, triggerCandidateId) {
         res = await axios.post(`${llmConfig.baseUrl.replace(/\/$/, '')}/chat/completions`, {
           model: llmConfig.model,
           temperature: 0.2,
+          stream: false, // omniroute combos default to SSE streaming; force JSON body so res.data.choices parses
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: userPrompt },
