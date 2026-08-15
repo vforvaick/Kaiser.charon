@@ -1,26 +1,40 @@
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import sqlite3 from 'better-sqlite3';
 
 // Ensure standalone reporter executions never trigger Telegram polling listeners (prevents 409 Conflict)
 process.env.DISABLE_TELEGRAM_POLLING = 'true';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, '..');
+
 const MATRIX_CELLS = [
-  { id: 'sniper-llm', strategy: 'sniper', useLlm: true, dbPath: './data/sniper_llm.sqlite' },
-  { id: 'sniper-rules', strategy: 'sniper', useLlm: false, dbPath: './data/sniper_rules.sqlite' },
-  { id: 'dip_buy-llm', strategy: 'dip_buy', useLlm: true, dbPath: './data/dip_buy_llm.sqlite' },
-  { id: 'dip_buy-rules', strategy: 'dip_buy', useLlm: false, dbPath: './data/dip_buy_rules.sqlite' },
-  { id: 'smart_money-llm', strategy: 'smart_money', useLlm: true, dbPath: './data/smart_money_llm.sqlite' },
-  { id: 'smart_money-rules', strategy: 'smart_money', useLlm: false, dbPath: './data/smart_money_rules.sqlite' },
-  { id: 'degen-llm', strategy: 'degen', useLlm: true, dbPath: './data/degen_llm.sqlite' },
-  { id: 'degen-rules', strategy: 'degen', useLlm: false, dbPath: './data/degen_rules.sqlite' },
+  { id: 'sniper-llm', strategy: 'sniper', useLlm: true, filename: 'sniper_llm.sqlite' },
+  { id: 'sniper-rules', strategy: 'sniper', useLlm: false, filename: 'sniper_rules.sqlite' },
+  { id: 'dip_buy-llm', strategy: 'dip_buy', useLlm: true, filename: 'dip_buy_llm.sqlite' },
+  { id: 'dip_buy-rules', strategy: 'dip_buy', useLlm: false, filename: 'dip_buy_rules.sqlite' },
+  { id: 'smart_money-llm', strategy: 'smart_money', useLlm: true, filename: 'smart_money_llm.sqlite' },
+  { id: 'smart_money-rules', strategy: 'smart_money', useLlm: false, filename: 'smart_money_rules.sqlite' },
+  { id: 'degen-llm', strategy: 'degen', useLlm: true, filename: 'degen_llm.sqlite' },
+  { id: 'degen-rules', strategy: 'degen', useLlm: false, filename: 'degen_rules.sqlite' },
 ];
 
+export function resolveDbPath(cell) {
+  if (cell.dbPath) {
+    if (path.isAbsolute(cell.dbPath)) return cell.dbPath;
+    return path.resolve(ROOT_DIR, cell.dbPath);
+  }
+  return path.resolve(ROOT_DIR, 'data', cell.filename);
+}
+
 export function collectCellMetrics(cell) {
-  if (!fs.existsSync(cell.dbPath)) {
-    return { ...cell, exists: false, candidates: 0, open: 0, closed: 0, wins: 0, winRate: 0, realizedPnlSol: 0, avgPnlPct: 0, navSol: 1.0 };
+  const dbPath = resolveDbPath(cell);
+  if (!fs.existsSync(dbPath)) {
+    return { ...cell, dbPath, exists: false, candidates: 0, open: 0, closed: 0, wins: 0, winRate: 0, realizedPnlSol: 0, avgPnlPct: 0, navSol: 1.0 };
   }
   try {
-    const db = sqlite3(cell.dbPath, { readonly: true });
+    const db = sqlite3(dbPath, { readonly: true });
     const candidates = db.prepare('SELECT COUNT(*) AS count FROM candidates').get()?.count || 0;
     const open = db.prepare("SELECT COUNT(*) AS count FROM dry_run_positions WHERE status = 'open'").get()?.count || 0;
     const closed = db.prepare("SELECT COUNT(*) AS count FROM dry_run_positions WHERE status = 'closed'").get()?.count || 0;
@@ -34,6 +48,7 @@ export function collectCellMetrics(cell) {
 
     return {
       ...cell,
+      dbPath,
       exists: true,
       candidates,
       open,
@@ -45,7 +60,7 @@ export function collectCellMetrics(cell) {
       navSol,
     };
   } catch (err) {
-    return { ...cell, exists: false, error: err.message, candidates: 0, open: 0, closed: 0, wins: 0, winRate: 0, realizedPnlSol: 0, avgPnlPct: 0, navSol: 1.0 };
+    return { ...cell, dbPath, exists: false, error: err.message, candidates: 0, open: 0, closed: 0, wins: 0, winRate: 0, realizedPnlSol: 0, avgPnlPct: 0, navSol: 1.0 };
   }
 }
 
@@ -57,9 +72,10 @@ export function generateMatrixReport(metricsList) {
       return;
     }
     const sign = m.realizedPnlSol >= 0 ? '+' : '';
+    const openNote = m.open > 0 ? ` (Excludes ${m.open} open)` : '';
     lines.push([
       `• <b>${m.id}</b> (${m.useLlm ? 'LLM' : 'Rules'})`,
-      `  NAV: ${m.navSol.toFixed(3)} SOL (${sign}${m.realizedPnlSol.toFixed(4)} SOL)`,
+      `  Realized NAV: ${m.navSol.toFixed(3)} SOL (${sign}${m.realizedPnlSol.toFixed(4)} SOL)${openNote}`,
       `  Closed: ${m.closed} · Win Rate: ${m.winRate.toFixed(1)}% · Wins: ${m.wins}`,
       `  Candidates: ${m.candidates} · Open: ${m.open} · Avg Trade: ${m.avgPnlPct.toFixed(1)}%`,
     ].join('\n'));
