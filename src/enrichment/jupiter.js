@@ -172,39 +172,78 @@ function summarizeCandles(label, candles) {
   };
 }
 
-async function fetchJupiterChartWindow(mint, interval, candles, label) {
-  const url = new URL(`https://datapi.jup.ag/v2/charts/${mint}`);
-  url.searchParams.set('interval', interval);
-  url.searchParams.set('to', String(now()));
-  url.searchParams.set('candles', String(candles));
-  url.searchParams.set('type', 'price');
-  url.searchParams.set('quote', 'native');
-  const res = await axios.get(url.toString(), {
-    timeout: 10_000,
-    headers: JSON_HEADERS,
-  });
-  return summarizeCandles(label, Array.isArray(res.data?.candles) ? res.data.candles : []);
+const jupiterChartCache = new Map();
+let jupiterChartBackoffUntil = 0;
+
+function jupiterChartBackoffActive() {
+  return now() < jupiterChartBackoffUntil;
 }
 
-async function fetchJupiterChartContext(mint) {
+function setJupiterChartBackoff(err) {
+  if (err.response?.status !== 429) return;
+  const resetHeader = Number(err.response?.headers?.['x-ratelimit-reset'] || 0);
+  const resetMs = resetHeader > 1_000_000_000_000 ? resetHeader : resetHeader * 1000;
+  jupiterChartBackoffUntil = resetMs > now() ? resetMs : now() + 60_000;
+  console.log(`[chart] backing off until ${new Date(jupiterChartBackoffUntil).toISOString()} (429)`);
+}
+
+async function fetchJupiterChartWindow(mint, interval, candles, label) {
+  try {
+    const url = new URL(`https://datapi.jup.ag/v2/charts/${mint}`);
+    url.searchParams.set('interval', interval);
+    url.searchParams.set('to', String(now()));
+    url.searchParams.set('candles', String(candles));
+    url.searchParams.set('type', 'price');
+    url.searchParams.set('quote', 'native');
+    const res = await axios.get(url.toString(), {
+      timeout: 10_000,
+      headers: JSON_HEADERS,
+    });
+    return summarizeCandles(label, Array.isArray(res.data?.candles) ? res.data.candles : []);
+  } catch (err) {
+    throw err;
+  }
+}
+
+async function fetchJupiterChartContext(mint, { ttlMs = 60_000 } = {}) {
+  const cached = jupiterChartCache.get(mint);
+  if (cached && now() - cached.at < ttlMs) {
+    return cached.data;
+  }
+  if (jupiterChartBackoffActive()) {
+    if (cached) return cached.data;
+    return { quote: 'native', purpose: 'ATH/range context', windows: [], available: false, backoff: true };
+  }
+
   const windows = [
     ['5_MINUTE', 288, 'ath_context_24h_5m'],
     ['1_HOUR', 168, 'swing_7d_1h'],
     ['4_HOUR', 180, 'long_30d_4h'],
   ];
+  let hit429 = false;
   const results = await Promise.all(windows.map(([interval, candles, label]) => (
     fetchJupiterChartWindow(mint, interval, candles, label).catch((err) => {
+      if (err.response?.status === 429) {
+        hit429 = true;
+        setJupiterChartBackoff(err);
+      }
       console.log(`[chart] ${mint.slice(0, 8)}... ${interval} ${err.message}`);
       return { label, available: false, error: err.message };
     })
   )));
+
+  if (hit429 && cached) {
+    return cached.data;
+  }
+
   const available = results.filter(row => row.available);
   const currentNative = available[0]?.current ?? null;
   const rangeHigh = available.length ? Math.max(...available.map(row => Number(row.high || 0))) : null;
   const topBlastRisk = Number.isFinite(Number(currentNative)) && Number.isFinite(Number(rangeHigh)) && rangeHigh > 0
     ? currentNative / rangeHigh >= 0.85
     : null;
-  return {
+
+  const summary = {
     quote: 'native',
     purpose: 'ATH/range context, not momentum scoring',
     currentNative,
@@ -214,6 +253,11 @@ async function fetchJupiterChartContext(mint) {
     topBlastRisk,
     windows: results,
   };
+
+  if (available.length > 0) {
+    jupiterChartCache.set(mint, { data: summary, at: now() });
+  }
+  return summary;
 }
 
 const IGNORED_PNL_MINTS = new Set([

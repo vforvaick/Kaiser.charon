@@ -86,16 +86,19 @@ export async function startCharon() {
     startPumpportal();
   }
 
-  // Position monitoring runs in both modes
+  // Position monitoring runs in both modes with random startup jitter (0-2000ms) to desynchronize processes
   const trackPositions = makeFailureTracker('position monitor', (msg) => sendTelegram(msg));
   let positionMonitorRunning = false;
-  setInterval(async () => {
-    if (positionMonitorRunning) return;
-    positionMonitorRunning = true;
-    try {
-      await trackPositions(() => monitorPositions());
-    } finally {
-      positionMonitorRunning = false;
-    }
-  }, POSITION_CHECK_MS);
+  const initialJitterMs = Math.floor(Math.random() * 2000);
+  setTimeout(() => {
+    setInterval(async () => {
+      if (positionMonitorRunning) return;
+      positionMonitorRunning = true;
+      try {
+        await trackPositions(() => monitorPositions());
+      } finally {
+        positionMonitorRunning = false;
+      }
+    }, POSITION_CHECK_MS);
+  }, initialJitterMs);
 }

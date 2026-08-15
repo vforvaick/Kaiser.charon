@@ -26,15 +26,15 @@ setDegenHandler(maybeProcessDegenCandidate);
 setCandidateHandler(processCandidateFromSignals);
 
 export async function processCandidateFromSignals(signals) {
+  // Load strategy early — needed for max position & duplicate checks below
+  const strat = activeStrategy();
+
   // Skip if max positions reached — don't waste enrichment/LLM calls
   if (!canOpenMorePositions()) {
-    const max = numSetting('max_open_positions', 3);
+    const max = strat.max_open_positions ?? numSetting('max_open_positions', 3);
     console.log(`[agent] max positions reached (${openPositionCount()}/${max}), skipping ${signals.mint.slice(0, 8)}...`);
     return;
   }
-
-  // Load strategy early — needed for duplicate checks below
-  const strat = activeStrategy();
 
   // DUPLICATE CHECKS — all run BEFORE enrichment to save API calls
   try {
@@ -155,7 +155,11 @@ export async function processCandidateFromSignals(signals) {
 
   let rows, batchDecision, batchId;
 
-  if (!strat.use_llm) {
+  if (strat.use_llm) {
+    rows = recentEligibleCandidates(numSetting('llm_candidate_pick_count', 10));
+    batchDecision = await decideCandidateBatch(rows, candidateId);
+    batchId = storeBatchDecision(candidateId, rows, batchDecision);
+  } else {
     const selfRow = candidateById(candidateId);
     rows = selfRow ? [selfRow] : [];
     batchId = null;
@@ -171,10 +175,6 @@ export async function processCandidateFromSignals(signals) {
       suggested_sl_percent: strat.sl_percent ?? numSetting('default_sl_percent', -25),
       raw: null,
     };
-  } else {
-    rows = recentEligibleCandidates(numSetting('llm_candidate_pick_count', 10));
-    batchDecision = await decideCandidateBatch(rows, candidateId);
-    batchId = storeBatchDecision(candidateId, rows, batchDecision);
   }
   const selectedRow = batchDecision.selected_row;
   const selectedThisCandidate = selectedRow?.id === candidateId;
