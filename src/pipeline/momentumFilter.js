@@ -9,6 +9,7 @@
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { firstPositiveNumber } from '../utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PYTHON_SCRIPT = path.join(__dirname, 'predict_momentum.py');
@@ -16,16 +17,30 @@ const TIMEOUT_MS = 8000; // 8 seconds max for Python
 const DEFAULT_THRESHOLD = 0.5;
 
 /**
+ * Resolve price from any available source (GMGN numeric price, GMGN price object, or Jupiter/trending fallbacks)
+ */
+export function resolveCandidatePrice(candidate) {
+  const gmgnPrice = candidate?.gmgn?.price;
+  const directGmgnPrice = typeof gmgnPrice === 'number' ? gmgnPrice : (gmgnPrice?.price ?? null);
+  return firstPositiveNumber(
+    directGmgnPrice,
+    candidate?.jupiterAsset?.usdPrice,
+    candidate?.metrics?.priceUsd,
+    candidate?.trending?.price,
+    candidate?.trenchesEntry?.price,
+  );
+}
+
+/**
  * Score a candidate using the momentum model.
  * Spawns a fresh Python process per request (model is small, loads fast).
  */
 export async function momentumFilter(candidate, threshold = DEFAULT_THRESHOLD) {
   const startTime = Date.now();
-  const mint = candidate.token?.mint?.slice(0, 8) || 'unknown';
+  const mint = candidate?.token?.mint?.slice(0, 8) || 'unknown';
   
-  // Check if we have price data
-  const price = candidate.gmgn?.price || {};
-  if (!price.price && !price.price_1h) {
+  const price = resolveCandidatePrice(candidate);
+  if (!price) {
     console.log(`[momentum] ${mint}... no price data — pass`);
     return { passed: true, score: 1.0, reason: 'no_price_data' };
   }
