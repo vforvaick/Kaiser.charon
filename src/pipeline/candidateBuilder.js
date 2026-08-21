@@ -227,6 +227,33 @@ export function filterCandidate(candidate) {
     if (candidate.trending.is_wash_trading === true || candidate.trending.is_wash_trading === 1) {
       failures.push('trending wash trading');
     }
+    // Buy-pressure guard (backtest 2026-08-21: buy_sell_ratio_1h >=2.0 is top edge, +3.66 SOL over baseline on sniper).
+    // Disabled by default (min_buy_sell_ratio_1h=0) — intra behind param, let momentum model handle until ADR-0006 holdout passes.
+    if (Number(strat.min_buy_sell_ratio_1h) > 0) {
+      const bsRatio1h = (() => {
+        const s1hBuy = Number(candidate.trending?.stats1h?.buyVolume ?? candidate.trending?.stats5m?.buyVolume ?? 0);
+        const s1hSell = Number(candidate.trending?.stats1h?.sellVolume ?? candidate.trending?.stats5m?.sellVolume ?? 0);
+        if (s1hSell > 0) return s1hBuy / s1hSell;
+        const mvBuy = Number(candidate.metrics?.trendingBuyVolumeUsd ?? 0);
+        const mvSell = Number(candidate.metrics?.trendingSellVolumeUsd ?? 0);
+        if (mvSell > 0) return mvBuy / mvSell;
+        return null;
+      })();
+      if (bsRatio1h != null && bsRatio1h < Number(strat.min_buy_sell_ratio_1h)) {
+        failures.push(`buy_sell_ratio_1h ${bsRatio1h.toFixed(2)} < ${strat.min_buy_sell_ratio_1h}`);
+      }
+    }
+    if (Number(strat.min_buy_sell_ratio_5m) > 0) {
+      const bsRatio5m = (() => {
+        const s5mBuy = Number(candidate.trending?.stats5m?.buyVolume ?? 0);
+        const s5mSell = Number(candidate.trending?.stats5m?.sellVolume ?? 0);
+        if (s5mSell > 0) return s5mBuy / s5mSell;
+        return null;
+      })();
+      if (bsRatio5m != null && bsRatio5m < Number(strat.min_buy_sell_ratio_5m)) {
+        failures.push(`buy_sell_ratio_5m ${bsRatio5m.toFixed(2)} < ${strat.min_buy_sell_ratio_5m}`);
+      }
+    }
   }
 
   // Token age check — reject tokens older than token_age_max_ms (default 12 hours)

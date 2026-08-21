@@ -21,7 +21,7 @@ export function numSetting(key, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-const strategyCache = { id: null, config: null, at: 0 };
+export const strategyCache = { id: null, config: null, at: 0 };
 
 export function activeStrategy() {
   if (strategyCache.config && Date.now() - strategyCache.at < 5000) return strategyCache.config;

@@ -269,6 +269,8 @@ export function initDb() {
     trending_min_swaps: 0,
     trending_max_rug_ratio: 1,
     trending_max_bundler_rate: 1,
+    min_buy_sell_ratio_1h: 0,
+    min_buy_sell_ratio_5m: 0,
     position_size_sol: 0.08,
     max_open_positions: 3,
     tp_percent: 25,
