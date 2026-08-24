@@ -36,7 +36,10 @@ def safe_int(v: Any, default: int | None = None) -> int | None:
 
 def extract_features(row: sqlite3.Row) -> dict[str, Any]:
     """Extract ALL numeric features from candidate_json."""
-    cj = json.loads(row['candidate_json']) if row['candidate_json'] else {}
+    try:
+        cj = json.loads(row['candidate_json']) if row['candidate_json'] else {}
+    except Exception:
+        cj = {}
     c = cj.get('candidate', cj)
 
     me = c.get('metrics', {}) or {}
@@ -470,6 +473,40 @@ def run_backtest(db_path: str) -> None:
             print(f"    Best: {best_label} → {best_r[0]} trades, {best_r[1]:.1f}% WR, {best_r[2]:+.3f} SOL (+{best_pnl:+.3f})")
         else:
             print("    No filter improves PnL")
+
+    # =========================================================================
+    # SECTION 5: Profile Replays (Obicle & El Ponny Evaluation - Ticket 03)
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STRATEGY PROFILE REPLAY EVALUATION (Ticket 03)")
+    print("=" * 80)
+
+    # Obicle Degen: Mcap $7k-$20k, dev_migrations <= 7
+    obicle_candidates = [
+        d for d in data
+        if 7000 <= d['entry_mcap'] <= 20000 and d['au_devMigrations'] <= 7
+    ]
+    obicle_res = analyze(obicle_candidates)
+    if obicle_res:
+        n, wr, pnl, sl, tp, avg = obicle_res
+        print(f"  [Obicle Degen ($7k-$20k mcap, dev_mig<=7)]: N={n} trades | WR={wr:.1f}% | PnL={pnl:+.4f} SOL | SL={sl} | TP={tp} | Avg={avg:+.2f}%")
+    else:
+        print("  [Obicle Degen]: 0 matching trades found in sample")
+
+    # El Ponny Safe Decentralized: Top10 < 30%, Bundler < 30%, Mcap $30k-$150k
+    elponny_candidates = [
+        d for d in data
+        if 30000 <= d['entry_mcap'] <= 150000
+        and d['au_topHoldersPct'] <= 30
+        and (d['au_bundlerPercent'] <= 30 or d['au_bundlerHoldingPct'] <= 30)
+    ]
+    elponny_res = analyze(elponny_candidates)
+    if elponny_res:
+        n, wr, pnl, sl, tp, avg = elponny_res
+        print(f"  [El Ponny Safe (Top10<=30%, Bundler<=30%, $30k-$150k)]: N={n} trades | WR={wr:.1f}% | PnL={pnl:+.4f} SOL | SL={sl} | TP={tp} | Avg={avg:+.2f}%")
+    else:
+        print("  [El Ponny Safe]: 0 matching trades found in sample")
+
 
 
 def resolve_db_paths(cli_args: list[str]) -> list[str]:

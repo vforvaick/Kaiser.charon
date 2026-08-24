@@ -113,6 +113,21 @@ export function filterCandidate(candidate) {
     failures.push(`max top holder: ${maxHolder}% > ${strat.max_top20_holder_percent}%`);
   }
 
+  // Cumulative top-10 holder concentration (Ticket 02)
+  const maxTop10Setting = Number(strat.max_top10_holder_percent);
+  if (Number.isFinite(maxTop10Setting) && maxTop10Setting > 0) {
+    let top10Cumulative = Number(candidate.jupiterAsset?.audit?.topHoldersPercentage);
+    if (!Number.isFinite(top10Cumulative) && Array.isArray(candidate.holders?.top20)) {
+      const top10Slice = candidate.holders.top20.slice(0, 10);
+      if (top10Slice.length > 0) {
+        top10Cumulative = top10Slice.reduce((sum, h) => sum + Number(h.percent || 0), 0);
+      }
+    }
+    if (Number.isFinite(top10Cumulative) && top10Cumulative > maxTop10Setting) {
+      failures.push(`top10 cumulative holders: ${top10Cumulative.toFixed(1)}% > ${maxTop10Setting}%`);
+    }
+  }
+
   // === AUDIT MODE: All hard filters disabled for 3-day data collection (2026-07-05) ===
 
   // Pumpportal bot dominance check — DISABLED for audit
@@ -333,7 +348,7 @@ export function filterCandidate(candidate) {
 // v45 Soft Scoring Engine
 // ============================================================
 
-function computeSoftScore(candidate, strat, isFreshGrad) {
+function computeSoftScore(candidate, _strat, isFreshGrad) {
   let score = 100;
   const route = candidate.signals?.route || '';
   
@@ -384,9 +399,7 @@ function computeSoftScore(candidate, strat, isFreshGrad) {
     } else if (route === 'trenches_completed') {
       if (top10Pct >= 25 && top10Pct < 35) { score -= 20; } // Trenches rug zone
       else if (top10Pct >= 50) { score -= 15; }
-    } else {
-      if (top10Pct >= 50) { score -= 20; }
-    }
+    } else if (top10Pct >= 50) { score -= 20; }
   }
 
   // --- NEGATIVE: Dev migrations (non-fresh, all routes) ---
