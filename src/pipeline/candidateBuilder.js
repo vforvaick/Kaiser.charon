@@ -211,7 +211,7 @@ export function filterCandidate(candidate) {
     // BACKTEST 2026-07-07 (B-1): trending_min_volume_usd was INVERTED — it admitted the
     // worse half (trendingVol>=5000 -> -13.87 SOL vs <5000 -> -3.41 SOL). Higher trending
     // volume monotonically correlates with LOSS here. Disabled as a floor. Do NOT re-enable
-    // as a minimum; if used at all it should be a CAP. See BACKTEST_EDGE_2026-07-07.md.
+    // as a minimum; if used at all it should be a CAP. See docs/archive/BACKTEST_EDGE_2026-07-07.md.
     // if (strat.trending_min_volume_usd > 0 && trendingVolume < strat.trending_min_volume_usd) {
     //   failures.push(`trending volume: ${trendingVolume} < ${strat.trending_min_volume_usd}`);
     // }
@@ -284,7 +284,7 @@ export function filterCandidate(candidate) {
   // monotonic (every neighboring threshold behaves the same) — a real signal, not a
   // lucky bucket. Fresh-grads are NOT exempted: their liq<6000 subset lost -2.43 SOL
   // (WR 31%), so exempting them cut total to +2.94. Read from candidate.metrics.liquidityUsd
-  // (same field the backtest measured). See BACKTEST_EDGE_2026-07-07.md.
+  // (same field the backtest measured). See docs/archive/BACKTEST_EDGE_2026-07-07.md.
   const liquidity = Number(candidate.metrics?.liquidityUsd || candidate.gmgn?.pool?.liquidity || candidate.gmgn?.liquidity || 0);
   if (liquidity > 0 && liquidity < 6000) {
     failures.push(`DEX liquidity too low: $${liquidity.toFixed(0)} < $6000`);

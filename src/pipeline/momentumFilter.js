@@ -104,10 +104,10 @@ export async function momentumFilter(candidate, threshold = DEFAULT_THRESHOLD) {
         const passed = score >= threshold;
         const latency = Date.now() - startTime;
         
-        if (!passed) {
-          console.log(`[momentum] ${mint}... REJECTED score=${score.toFixed(3)} < ${threshold} (${latency}ms)`);
-        } else {
+        if (passed) {
           console.log(`[momentum] ${mint}... PASSED score=${score.toFixed(3)} (${latency}ms)`);
+        } else {
+          console.log(`[momentum] ${mint}... REJECTED score=${score.toFixed(3)} < ${threshold} (${latency}ms)`);
         }
         
         finish({ passed, score, latency });

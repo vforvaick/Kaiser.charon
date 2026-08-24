@@ -18,6 +18,8 @@ ARCHITECTURE.md
 # Local analysis artifacts — machine-specific, not part of the bot
 __pycache__/
 *.pyc
+.ruff_cache/
+*.zip
 backtest/
 reports/
 models/

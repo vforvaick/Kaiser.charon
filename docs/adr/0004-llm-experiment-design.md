@@ -5,7 +5,7 @@ Deciders: Shiroe, Oracle second-opinion
 
 ## Context
 
-Prior run (documented in `STRATEGY_ANALYSIS.md`) produced 0 LLM-issued BUY verdicts across 36 batch screens due to prompt conservatism ("unusually strong asymmetric opportunity"), plus 5-15s latency per batch. In the current 8-cell run, LLM cells had 0 trades because `LLM_API_KEY` was unconfigured until 2026-08-15.
+Prior run (documented in `docs/archive/STRATEGY_ANALYSIS.md`) produced 0 LLM-issued BUY verdicts across 36 batch screens due to prompt conservatism ("unusually strong asymmetric opportunity"), plus 5-15s latency per batch. In the current 8-cell run, LLM cells had 0 trades because `LLM_API_KEY` was unconfigured until 2026-08-15.
 
 Shiroe asked: "If we don't use LLM, will LLM improve all strategies?"
 
