@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { filterCandidate } from '../src/pipeline/candidateBuilder.js';
-import { db } from '../src/db/connection.js';
+import { db, initDb } from '../src/db/connection.js';
 import * as settings from '../src/db/settings.js';
+
+// Ensure schema & seed strategies are fully initialized
+initDb();
 
 function withStrategy(stratId, overrides, fn) {
   const strat = db.prepare('SELECT config_json FROM strategies WHERE id = ?').get(stratId);
