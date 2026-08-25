@@ -93,17 +93,26 @@ async function fetchJupiterAsset(mint, { useCache = true, ttlMs = 20_000 } = {})
   }
 }
 
-async function fetchSolUsdPrice() {
+async function fetchSolUsdPrice({ ttlMs = 15_000 } = {}) {
+  if (solUsdCache.price != null && now() - solUsdCache.at < ttlMs) {
+    return solUsdCache.price;
+  }
   try {
     const res = await axios.get(`https://lite-api.jup.ag/price/v3?ids=${WSOL_MINT}`, {
       timeout: 5000,
       headers: JSON_HEADERS,
     });
     const price = Number(res.data?.[WSOL_MINT]?.usdPrice);
-    return Number.isFinite(price) && price > 0 ? price : null;
+    if (Number.isFinite(price) && price > 0) {
+      solUsdCache = { price, at: now() };
+      return price;
+    }
+    return solUsdCache.price || null;
   } catch (err) {
-    console.log(`[sol-price] ${err.response?.status || ''} ${err.message}`);
-    return null;
+    if (err.response?.status !== 429) {
+      console.log(`[sol-price] ${err.response?.status || ''} ${err.message}`);
+    }
+    return solUsdCache.price || null;
   }
 }
 
@@ -267,10 +276,7 @@ const IGNORED_PNL_MINTS = new Set([
 ]);
 
 async function fetchSolUsdPriceCached() {
-  if (solUsdCache.price != null && now() - solUsdCache.at < 60_000) return solUsdCache.price;
-  const price = await fetchSolUsdPrice();
-  solUsdCache = { price, at: now() };
-  return price;
+  return fetchSolUsdPrice({ ttlMs: 60_000 });
 }
 
 // Fixed 1000-token reference amount ignores price impact for large sizes —
