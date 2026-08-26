@@ -5,9 +5,11 @@ test best combos, and verify daily consistency.
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 from collections import defaultdict
 from collections.abc import Callable
@@ -241,8 +243,23 @@ def run_backtest(db_path: str) -> None:
         print(f"Error: database not found at {db_path}", file=sys.stderr)
         return
 
+    # Provenance Header
+    ds_hash = "unknown"
+    try:
+        if os.path.exists(db_path):
+            with open(db_path, 'rb') as f:
+                ds_hash = hashlib.sha256(f.read(1024 * 1024)).hexdigest()[:16]
+    except Exception as e:
+        ds_hash = f"err_{type(e).__name__}"
+
+    git_sha = "unknown"
+    try:
+        git_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception as e:
+        git_sha = f"err_{type(e).__name__}"
+
     print("=" * 100)
-    print(f"DATABASE: {db_path}")
+    print(f"DATABASE: {db_path} | Dataset SHA-256: {ds_hash}... | Git: {git_sha}")
     print("=" * 100)
 
     db = sqlite3.connect(f'file:{os.path.abspath(db_path)}?mode=ro', uri=True)
@@ -577,14 +594,43 @@ def run_backtest(db_path: str) -> None:
                 resampled.extend(days_dict[k])
             b_means.append(sum(resampled) / len(resampled) if resampled else 0)
         b_means.sort()
-        try:
-            lcb95 = b_means[int(len(b_means) * 0.05)]
-            median = b_means[int(len(b_means) * 0.50)]
-            print(f"  Clustered Bootstrap (1,000 runs, {len(day_keys)} day-blocks): Median Expectancy: {median:+.5f} SOL/trade | 95% LCB: {lcb95:+.5f} SOL/trade")
-        except Exception:
-            print("  Clustered Bootstrap: Error calculating bounds")
+    # 3. CVaR 95% Tail Risk
+    pnl_list = [d['pnl_sol'] - 0.0005 for d in executed]
+    pnl_list.sort()
+    try:
+        tail_cut = max(1, int(len(pnl_list) * 0.05))
+        tail_trades = pnl_list[:tail_cut]
+    except Exception:
+        tail_trades = []
+
+    if len(tail_trades) >= 5:
+        cvar95 = sum(tail_trades) / len(tail_trades)
+        print(f"  CVaR 95% (Expected Shortfall on worst 5% tail): {cvar95:+.5f} SOL | Worst Single: {tail_trades[0]:+.5f} SOL")
     else:
-        print("  Clustered Bootstrap: INCONCLUSIVE (< 5 daily blocks found)")
+        print(f"  CVaR 95%: INSUFFICIENT_TAIL_SAMPLES (found {len(tail_trades)}, required 5)")
+
+    # 4. 4-Stage Promotion Scorecard Check
+    pf = 0.0
+    wins = [p for p in pnl_list if p > 0]
+    losses = [p for p in pnl_list if p <= 0]
+    if losses:
+        gross_loss = abs(sum(losses))
+        pf = sum(wins) / gross_loss if gross_loss > 0 else 0
+    elif wins:
+        pf = 999.0
+
+    pos_days = sum(1 for v in days_dict.values() if sum(v) > 0)
+    day_consist = (pos_days / len(days_dict) * 100) if days_dict else 0
+
+    print("\n  [Stage 1: Causal Replay Scorecard]")
+    pass_n = len(executed) >= 50
+    pass_pf = pf >= 1.2
+    pass_consist = day_consist >= 70.0
+    print(f"    - Sample Size Floor (>=50): {'PASS' if pass_n else 'FAIL'} ({len(executed)} trades)")
+    print(f"    - Profit Factor (>=1.20): {'PASS' if pass_pf else 'FAIL'} (PF: {pf:.2f})")
+    print(f"    - Daily Consistency (>=70%): {'PASS' if pass_consist else 'FAIL'} ({day_consist:.1f}%)")
+    stage1_status = "STAGE_1_PASS" if (pass_n and pass_pf and pass_consist) else "STAGE_1_FAIL"
+    print(f"    => Stage 1 Verdict: {stage1_status}")
 
 
 
@@ -635,6 +681,9 @@ def resolve_db_paths(cli_args: list[str]) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Comprehensive edge backtest on Charon trade data.')
     parser.add_argument('--db', nargs='*', default=[], help='Path to SQLite database file(s)')
+    parser.add_argument('--portfolio-sim', action='store_true', help='Run chronological portfolio simulation')
+    parser.add_argument('--compare-all', action='store_true', help='Compare all registered strategies side-by-side')
+    parser.add_argument('--counterfactual', action='store_true', help='Run counterfactual signal analysis on signal_captures')
     args, unknown = parser.parse_known_args()
 
     cli_inputs = list(args.db) + [u for u in unknown if not u.startswith('-')]

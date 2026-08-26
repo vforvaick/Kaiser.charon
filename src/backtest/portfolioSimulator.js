@@ -26,7 +26,10 @@ export class PortfolioSimulator {
 
     this.maxDrawdownSol = 0;
     this.maxDrawdownPct = 0;
+    this.maxDrawdownDurationMs = 0;
+    this.currentDrawdownStartMs = null;
     this.peakEquity = initialCapitalSol;
+    this.peakTimestamp = 0;
   }
 
   /**
@@ -115,7 +118,7 @@ export class PortfolioSimulator {
     }
 
     // Check cash balance
-    if (this.cashBalanceSol < ev.size + this.fixedFeeSolPerTrade) {
+    if (this.cashBalanceSol < ev.size) {
       this.capacitySkippedTrades.push({
         ...ev.trade,
         reason: 'INSUFFICIENT_CASH',
@@ -125,7 +128,7 @@ export class PortfolioSimulator {
     }
 
     // Enter position
-    this.cashBalanceSol -= (ev.size + this.fixedFeeSolPerTrade);
+    this.cashBalanceSol -= ev.size;
     this.activePositions.set(ev.tradeId, {
       tradeId: ev.tradeId,
       size: ev.size,
@@ -152,8 +155,24 @@ export class PortfolioSimulator {
       activeCount: this.activePositions.size,
     });
 
-    if (equity > this.peakEquity) {
+    if (equity >= this.peakEquity) {
+      if (this.currentDrawdownStartMs !== null) {
+        const duration = timestamp - this.currentDrawdownStartMs;
+        if (duration > this.maxDrawdownDurationMs) {
+          this.maxDrawdownDurationMs = duration;
+        }
+        this.currentDrawdownStartMs = null;
+      }
       this.peakEquity = equity;
+      this.peakTimestamp = timestamp;
+    } else {
+      if (this.currentDrawdownStartMs === null) {
+        this.currentDrawdownStartMs = timestamp;
+      }
+      const ongoingDuration = timestamp - this.currentDrawdownStartMs;
+      if (ongoingDuration > this.maxDrawdownDurationMs) {
+        this.maxDrawdownDurationMs = ongoingDuration;
+      }
     }
 
     const currentDdSol = this.peakEquity - equity;
@@ -198,6 +217,7 @@ export class PortfolioSimulator {
       profitFactor,
       maxDrawdownSol: this.maxDrawdownSol,
       maxDrawdownPct: this.maxDrawdownPct,
+      maxDrawdownDurationMs: this.maxDrawdownDurationMs,
       equityCurve: this.equityCurve,
     };
   }

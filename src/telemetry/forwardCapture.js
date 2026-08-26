@@ -1,47 +1,115 @@
 import { db } from '../db/connection.js';
 import { now } from '../utils.js';
 
+// Bounded in-memory telemetry queue to prevent synchronous SQLite locks on ingestion path
+const telemetryQueue = [];
+let isFlushing = false;
+
+function safeJsonParse(val, fallback) {
+  try {
+    return JSON.parse(val || '');
+  } catch {
+    return fallback;
+  }
+}
+
 /**
- * Record an immutable pre-guard signal observation in signal_captures table.
+ * Enqueue signal observation asynchronously (non-blocking collector seam).
  */
-export function recordSignalObservation({
-  mint,
-  signalId = null,
-  strategyId = 'default',
-  observedAtMs = now(),
-  decisionAtMs = null,
+export function recordSignalObservation(payload) {
+  if (!payload?.mint) return null;
+  const item = { ...payload, enqueuedAtMs: now() };
+  if (telemetryQueue.length < 5000) {
+    telemetryQueue.push(item);
+  } else {
+    console.warn(`[telemetry] queue full (${telemetryQueue.length}), dropping capture for ${payload.mint}`);
+  }
+  // Schedule async flush
+  setImmediate(flushTelemetryQueue);
+  return true;
+}
+
+export function flushTelemetryQueue() {
+  if (isFlushing || !telemetryQueue.length) return;
+  isFlushing = true;
+  try {
+    const items = telemetryQueue.splice(0, 100);
+    const stmt = db.prepare(`
+      INSERT INTO signal_captures (
+        signal_id, mint, strategy_id, observed_at_ms, decision_at_ms,
+        passed_prefilter, failure_reasons_json, entry_price_usd, entry_mcap_usd,
+        capture_status, metadata_json, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertMany = db.transaction((rows) => {
+      for (const r of rows) {
+        stmt.run(
+          r.signalId || null,
+          r.mint,
+          r.strategyId || 'default',
+          r.observedAtMs || now(),
+          r.decisionAtMs || r.observedAtMs || now(),
+          r.passedPrefilter ? 1 : 0,
+          JSON.stringify(r.failureReasons || []),
+          Number.isFinite(Number(r.entryPriceUsd)) ? Number(r.entryPriceUsd) : null,
+          Number.isFinite(Number(r.entryMcapUsd)) ? Number(r.entryMcapUsd) : null,
+          'pending',
+          JSON.stringify(r.metadata || {}),
+          now()
+        );
+      }
+    });
+
+    insertMany(items);
+  } catch (err) {
+    console.error(`[telemetry] flush error: ${err.message}`);
+  } finally {
+    isFlushing = false;
+    if (telemetryQueue.length > 0) {
+      setImmediate(flushTelemetryQueue);
+    }
+  }
+}
+
+/**
+ * Update decision outcome for an existing signal observation.
+ */
+export function updateSignalDecision(signalIdOrMint, {
   passedPrefilter = false,
   failureReasons = [],
   entryPriceUsd = null,
   entryMcapUsd = null,
-  metadata = {},
-}) {
-  if (!mint) return null;
-  const ts = now();
-  const stmt = db.prepare(`
-    INSERT INTO signal_captures (
-      signal_id, mint, strategy_id, observed_at_ms, decision_at_ms,
-      passed_prefilter, failure_reasons_json, entry_price_usd, entry_mcap_usd,
-      capture_status, metadata_json, created_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const info = stmt.run(
-    signalId,
-    mint,
-    strategyId,
-    observedAtMs,
-    decisionAtMs || observedAtMs,
-    passedPrefilter ? 1 : 0,
-    JSON.stringify(failureReasons || []),
-    Number.isFinite(Number(entryPriceUsd)) ? Number(entryPriceUsd) : null,
-    Number.isFinite(Number(entryMcapUsd)) ? Number(entryMcapUsd) : null,
-    'pending',
-    JSON.stringify(metadata || {}),
-    ts
-  );
-
-  return info.lastInsertRowid;
+  decisionAtMs = now(),
+} = {}) {
+  try {
+    const stmt = db.prepare(`
+      UPDATE signal_captures
+      SET passed_prefilter = ?,
+          failure_reasons_json = ?,
+          entry_price_usd = COALESCE(?, entry_price_usd),
+          entry_mcap_usd = COALESCE(?, entry_mcap_usd),
+          decision_at_ms = ?
+      WHERE id = (
+        SELECT id FROM signal_captures
+        WHERE (signal_id = ? OR mint = ?)
+        ORDER BY id DESC LIMIT 1
+      )
+    `);
+    const res = stmt.run(
+      passedPrefilter ? 1 : 0,
+      JSON.stringify(failureReasons || []),
+      Number.isFinite(Number(entryPriceUsd)) ? Number(entryPriceUsd) : null,
+      Number.isFinite(Number(entryMcapUsd)) ? Number(entryMcapUsd) : null,
+      decisionAtMs,
+      signalIdOrMint,
+      signalIdOrMint
+    );
+    return res.changes > 0;
+  } catch (err) {
+    console.error(`[telemetry] updateSignalDecision error: ${err.message}`);
+    return false;
+  }
 }
 
 /**
@@ -66,12 +134,43 @@ export function updateForwardPriceMarks(id, {
   return res.changes > 0;
 }
 
-function safeJsonParse(val, fallback) {
-  try {
-    return JSON.parse(val || '');
-  } catch {
-    return fallback;
+/**
+ * Rate-limited forward price mark resolver for due horizons (5m, 15m, 1h).
+ */
+export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20 } = {}) {
+  if (typeof priceFetcher !== 'function') return { resolved: 0, pending: 0 };
+  const currentTime = now();
+
+  // Find pending captures where at least 5 minutes have elapsed since observed_at_ms
+  const pendingRows = db.prepare(`
+    SELECT * FROM signal_captures
+    WHERE capture_status = 'pending' AND observed_at_ms <= ?
+    ORDER BY observed_at_ms ASC LIMIT ?
+  `).all(currentTime - 300_000, maxBatch);
+
+  let resolvedCount = 0;
+
+  for (const row of pendingRows) {
+    try {
+      const price = await priceFetcher(row.mint);
+      if (price != null && Number.isFinite(Number(price))) {
+        const elapsed = currentTime - row.observed_at_ms;
+        const updates = {};
+        if (elapsed >= 300_000 && !row.forward_5m_price) updates.forward5mPrice = Number(price);
+        if (elapsed >= 900_000 && !row.forward_15m_price) updates.forward15mPrice = Number(price);
+        if (elapsed >= 3_600_000) {
+          updates.forward1hPrice = Number(price);
+          updates.captureStatus = 'complete';
+        }
+        updateForwardPriceMarks(row.id, updates);
+        resolvedCount++;
+      }
+    } catch {
+      // Individual token fetch failure, retry on next cycle
+    }
   }
+
+  return { resolved: resolvedCount, pending: pendingRows.length };
 }
 
 /**

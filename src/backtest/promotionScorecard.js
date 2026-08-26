@@ -61,7 +61,7 @@ export function evaluatePromotionScorecard({
       passed: bootstrapStats.status === 'COMPLETE' && bootstrapStats.lcb95Sol > 0,
       value: bootstrapStats.status === 'COMPLETE' ? `${bootstrapStats.lcb95Sol > 0 ? '+' : ''}${bootstrapStats.lcb95Sol.toFixed(5)} SOL/trade` : (bootstrapStats.reason || 'N/A'),
       threshold: 'LCB > 0 (Positive edge confirmed)',
-      critical: false,
+      critical: true,
     },
     {
       name: 'Single Trade Profit Concentration',
@@ -72,10 +72,10 @@ export function evaluatePromotionScorecard({
     },
     {
       name: 'Daily Win Consistency',
-      passed: dailyConsistencyPct >= 60.0,
+      passed: dailyConsistencyPct >= 70.0,
       value: `${dailyConsistencyPct.toFixed(1)}% (${positiveDays}/${totalDays} days)`,
-      threshold: '>= 60%',
-      critical: false,
+      threshold: '>= 70%',
+      critical: true,
     },
   ];
 
@@ -85,7 +85,7 @@ export function evaluatePromotionScorecard({
   let stage1Verdict = 'STAGE_1_FAIL';
   if (totalTrades < 50) {
     stage1Verdict = 'INSUFFICIENT_SAMPLE';
-  } else if (criticalFails.length === 0 && totalPassed >= 5) {
+  } else if (criticalFails.length === 0 && totalPassed === checks.length) {
     stage1Verdict = 'STAGE_1_PASS';
   }
 

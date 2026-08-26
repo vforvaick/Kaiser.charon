@@ -18,6 +18,9 @@ export function computeClusteredBootstrap(trades = [], { iterations = 1000, seed
     return { status: 'INCONCLUSIVE', reason: 'NO_TRADES' };
   }
 
+  // Contract validation: iterations must be clamped or validated to 1,000-10,000
+  const clampedIterations = Math.max(1000, Math.min(10000, Number(iterations) || 1000));
+
   // 1. Group trades by calendar day (UTC)
   const daysMap = new Map();
   for (const t of trades) {
@@ -45,7 +48,7 @@ export function computeClusteredBootstrap(trades = [], { iterations = 1000, seed
   const sampleMeans = [];
 
   // 2. Resample day blocks with replacement
-  for (let i = 0; i < iterations; i++) {
+  for (let i = 0; i < clampedIterations; i++) {
     const resampledTrades = [];
     for (let d = 0; d < dayKeys.length; d++) {
       const pickedDay = dayKeys[Math.floor(nextRandom() * dayKeys.length)];
@@ -61,9 +64,9 @@ export function computeClusteredBootstrap(trades = [], { iterations = 1000, seed
   sampleMeans.sort((a, b) => a - b);
 
   // 3. Lower Confidence Bound (5th percentile = 95% confidence lower bound)
-  const lcbIndex = Math.floor(iterations * 0.05);
-  const medianIndex = Math.floor(iterations * 0.50);
-  const ucbIndex = Math.floor(iterations * 0.95);
+  const lcbIndex = Math.floor(clampedIterations * 0.05);
+  const medianIndex = Math.floor(clampedIterations * 0.50);
+  const ucbIndex = Math.floor(clampedIterations * 0.95);
 
   const lcb95 = sampleMeans[lcbIndex];
   const median = sampleMeans[medianIndex];
@@ -71,7 +74,7 @@ export function computeClusteredBootstrap(trades = [], { iterations = 1000, seed
 
   return {
     status: 'COMPLETE',
-    iterations,
+    iterations: clampedIterations,
     dailyBlocksCount: dayKeys.length,
     sampleSizeTrades: trades.length,
     meanExpectancySol: median,

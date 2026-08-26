@@ -19,7 +19,7 @@ import { setDegenHandler } from '../signals/trending.js';
 import { setCandidateHandler } from '../signals/feeClaim.js';
 import { short } from '../format.js';
 import { escapeHtml } from '../format.js';
-import { recordSignalObservation } from '../telemetry/forwardCapture.js';
+import { recordSignalObservation, updateSignalDecision } from '../telemetry/forwardCapture.js';
 
 export const seenSignalCandidates = new Map();
 
@@ -151,6 +151,19 @@ export async function processCandidateFromSignals(signals) {
   // FIX #2: Re-check filters BEFORE LLM call (prevent wasted LLM calls on stale data)
   // This catches cases where market conditions changed between initial filter and LLM batch eval
   filterCandidate(candidate);
+
+  // Update telemetry decision outcome (Ticket 00 & 03)
+  try {
+    updateSignalDecision(signals?.signature || signals?.mint, {
+      passedPrefilter: Boolean(candidate.filters?.passed),
+      failureReasons: candidate.filters?.failures || [],
+      entryPriceUsd: candidate.metrics?.priceUsd || null,
+      entryMcapUsd: candidate.metrics?.marketCapUsd || null,
+    });
+  } catch (err) {
+    // Non-blocking telemetry
+    console.error(`[telemetry] updateSignalDecision error: ${err.message}`);
+  }
   if (!candidate.filters.passed) {
     console.log(`[pre-llm-guard] filtered ${candidate.token.mint.slice(0, 8)}... ${candidate.filters.failures.join('; ')}`);
     return;
@@ -370,7 +383,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
           guardrails.pastWinPnlPercent = pastPos.pnl_percent;
           guardrails.wouldHaveBeenProfit = currentMcap > (pastPos.entry_mcap || 0);
         }
-      } catch (err) {
+      } catch {
         // Past position lookup failed — proceed with basic guardrails
       }
     }

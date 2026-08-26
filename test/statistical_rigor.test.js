@@ -1,7 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeClusteredBootstrap, computeCvar95, generateDatasetFingerprint } from '../src/backtest/statisticalRigor.js';
-import { recordSignalObservation, updateForwardPriceMarks, getSignalCapturesByStrategy } from '../src/telemetry/forwardCapture.js';
+import {
+  recordSignalObservation,
+  flushTelemetryQueue,
+  updateSignalDecision,
+  resolvePendingForwardMarks,
+  getSignalCapturesByStrategy
+} from '../src/telemetry/forwardCapture.js';
 import { analyzeCounterfactualOutcomes } from '../src/backtest/counterfactualAnalyzer.js';
 import { evaluatePromotionScorecard } from '../src/backtest/promotionScorecard.js';
 import { initDb } from '../src/db/connection.js';
@@ -9,35 +15,38 @@ import { initDb } from '../src/db/connection.js';
 initDb();
 
 describe('Ticket 00: Forward Capture & Immutability Schema', () => {
-  it('records an immutable signal capture observation and updates forward marks', () => {
+  it('enqueues signal observation, flushes queue, and updates decision outcomes', () => {
     const mint = 'testSignalCaptureMint11111111111111111111';
-    const id = recordSignalObservation({
+    recordSignalObservation({
       mint,
       signalId: 'sig_123',
       strategyId: 'sniper',
       observedAtMs: 1700000000000,
+    });
+
+    flushTelemetryQueue();
+
+    // Update decision outcome after screening
+    const updatedDecision = updateSignalDecision('sig_123', {
       passedPrefilter: true,
+      failureReasons: [],
       entryPriceUsd: 0.001,
       entryMcapUsd: 50000,
     });
-
-    assert.ok(id > 0, 'Row ID returned');
-
-    const updated = updateForwardPriceMarks(id, {
-      forward5mPrice: 0.0012,
-      forward15mPrice: 0.0015,
-      forward1hPrice: 0.0020,
-      captureStatus: 'complete',
-    });
-    assert.equal(updated, true);
+    assert.equal(updatedDecision, true);
 
     const rows = getSignalCapturesByStrategy('sniper', { sinceMs: 1700000000000 });
-    const match = rows.find(r => r.id === id);
+    const match = rows.find(r => r.mint === mint);
     assert.ok(match);
-    assert.equal(match.mint, mint);
     assert.equal(match.passed_prefilter, true);
-    assert.equal(match.forward_1h_price, 0.0020);
-    assert.equal(match.capture_status, 'complete');
+    assert.equal(match.entry_price_usd, 0.001);
+  });
+
+  it('resolves pending forward price marks asynchronously via rate-limited worker', async () => {
+    const mockPriceFetcher = async (_mint) => 0.0025;
+    const res = await resolvePendingForwardMarks(mockPriceFetcher, { maxBatch: 10 });
+    assert.ok(typeof res.resolved === 'number');
+    assert.ok(typeof res.pending === 'number');
   });
 });
 
@@ -51,7 +60,7 @@ describe('Ticket 02: Clustered Bootstrap & CVaR Tail Risk', () => {
     assert.equal(res.status, 'INCONCLUSIVE');
   });
 
-  it('computes 95% bootstrap confidence bounds across multi-day blocks', () => {
+  it('enforces iteration bounds (clamps to 1000-10000) and computes 95% LCB', () => {
     const trades = [];
     // 10 distinct days with positive average return
     for (let day = 1; day <= 10; day++) {
@@ -60,8 +69,10 @@ describe('Ticket 02: Clustered Bootstrap & CVaR Tail Risk', () => {
       trades.push({ opened_at_ms: ts + 1000, netPnl: 0.010 });
     }
 
+    // Input 500 should be clamped to 1,000
     const res = computeClusteredBootstrap(trades, { iterations: 500, minDailyBlocks: 5 });
     assert.equal(res.status, 'COMPLETE');
+    assert.equal(res.iterations, 1000, 'Iterations should be clamped to minimum 1,000');
     assert.ok(res.lcb95Sol > 0, '95% LCB should be positive');
     assert.equal(res.isPositiveEdgeConfirmed, true);
   });
@@ -113,10 +124,10 @@ describe('Ticket 03: Counterfactual Signal Analyzer', () => {
 });
 
 describe('Ticket 04: 4-Stage Promotion Scorecard', () => {
-  it('evaluates Stage 1 Causal Replay promotion criteria cleanly', () => {
+  it('passes Stage 1 when all critical criteria are met (LCB > 0, Daily >= 70%)', () => {
     const trades = Array.from({ length: 60 }, (_, i) => ({
       opened_at_ms: 1700000000000 + i * 86400000,
-      netPnl: i % 3 === 0 ? -0.005 : 0.015, // 40 wins (+0.60), 20 losses (-0.10)
+      netPnl: i % 4 === 0 ? -0.005 : 0.015, // 45 wins (75% positive days)
     }));
 
     const portfolioSummary = {
@@ -141,5 +152,33 @@ describe('Ticket 04: 4-Stage Promotion Scorecard', () => {
     assert.equal(scorecard.stage1Verdict, 'STAGE_1_PASS');
     assert.equal(scorecard.summary.totalTrades, 60);
     assert.ok(scorecard.checks.every(c => c.passed));
+  });
+
+  it('fails Stage 1 when bootstrap LCB is non-positive or daily consistency < 70%', () => {
+    const trades = Array.from({ length: 60 }, (_, i) => ({
+      opened_at_ms: 1700000000000 + i * 86400000,
+      netPnl: i % 2 === 0 ? -0.005 : 0.010, // 50% positive days
+    }));
+
+    const portfolioSummary = {
+      executedTradesCount: 60,
+      netRealizedPnlSol: 0.15,
+      profitFactor: 2.0,
+    };
+
+    const bootstrapStats = {
+      status: 'COMPLETE',
+      lcb95Sol: -0.001, // Negative LCB
+    };
+
+    const scorecard = evaluatePromotionScorecard({
+      strategyId: 'degen',
+      trades,
+      portfolioSummary,
+      bootstrapStats,
+      cvarStats: { cvar95Sol: -0.005 },
+    });
+
+    assert.equal(scorecard.stage1Verdict, 'STAGE_1_FAIL');
   });
 });
