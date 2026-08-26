@@ -264,7 +264,7 @@ def run_backtest(db_path: str, options: dict[str, Any] | None = None) -> None:
     ds_hash = "unknown"
     try:
         canonical_bytes = json.dumps([dict(r) for r in rows], sort_keys=True).encode('utf-8')
-        ds_hash = hashlib.sha256(canonical_bytes).hexdigest()[:16]
+        ds_hash = hashlib.sha256(canonical_bytes).hexdigest()
     except Exception as e:
         ds_hash = f"err_{type(e).__name__}"
 
@@ -275,7 +275,7 @@ def run_backtest(db_path: str, options: dict[str, Any] | None = None) -> None:
         git_sha = f"err_{type(e).__name__}"
 
     print("=" * 100)
-    print(f"DATABASE: {db_path} | Dataset Rows SHA-256: {ds_hash}... | Git: {git_sha}")
+    print(f"DATABASE: {db_path} | Dataset Rows SHA-256: {ds_hash} | Git: {git_sha}")
     print("=" * 100)
 
     data = [extract_features(r) for r in rows]

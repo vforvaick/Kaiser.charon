@@ -35,6 +35,9 @@ describe('Ticket 00: Forward Capture & Immutability Schema', () => {
     });
     assert.equal(updatedDecision, true);
 
+    // Explicitly flush queued decision update
+    flushTelemetryQueue();
+
     const rows = getSignalCapturesByStrategy('sniper', { sinceMs: 1700000000000 });
     const match = rows.find(r => r.mint === mint);
     assert.ok(match);
