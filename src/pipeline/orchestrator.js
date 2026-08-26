@@ -135,7 +135,17 @@ export async function processCandidateFromSignals(signals) {
     // DB check failed — proceed anyway
   }
 
-  if (!candidate.filters.passed) {
+  if (!candidate.filters?.passed) {
+    try {
+      updateSignalDecision(signals?.signature || signals?.mint, {
+        passedPrefilter: false,
+        failureReasons: candidate.filters?.failures || [],
+        entryPriceUsd: candidate.metrics?.priceUsd || null,
+        entryMcapUsd: candidate.metrics?.marketCapUsd || null,
+      });
+    } catch {
+      // Non-blocking telemetry
+    }
     console.log(`[candidate] filtered ${candidate.token.mint.slice(0, 8)}... ${candidate.filters.failures.join('; ')}`);
     return;
   }

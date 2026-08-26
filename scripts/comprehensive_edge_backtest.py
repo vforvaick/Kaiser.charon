@@ -238,29 +238,10 @@ def daily_consistency(
     return results, pos_days, neg_days, total_days
 
 
-def run_backtest(db_path: str) -> None:
+def run_backtest(db_path: str, options: dict[str, Any] | None = None) -> None:
     if not os.path.exists(db_path):
         print(f"Error: database not found at {db_path}", file=sys.stderr)
         return
-
-    # Provenance Header
-    ds_hash = "unknown"
-    try:
-        if os.path.exists(db_path):
-            with open(db_path, 'rb') as f:
-                ds_hash = hashlib.sha256(f.read(1024 * 1024)).hexdigest()[:16]
-    except Exception as e:
-        ds_hash = f"err_{type(e).__name__}"
-
-    git_sha = "unknown"
-    try:
-        git_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
-    except Exception as e:
-        git_sha = f"err_{type(e).__name__}"
-
-    print("=" * 100)
-    print(f"DATABASE: {db_path} | Dataset SHA-256: {ds_hash}... | Git: {git_sha}")
-    print("=" * 100)
 
     db = sqlite3.connect(f'file:{os.path.abspath(db_path)}?mode=ro', uri=True)
     db.row_factory = sqlite3.Row
@@ -278,6 +259,24 @@ def run_backtest(db_path: str) -> None:
     if not rows:
         print(f"No closed trades with candidate_json found in {db_path}")
         return
+
+    # Provenance Header
+    ds_hash = "unknown"
+    try:
+        canonical_bytes = json.dumps([dict(r) for r in rows], sort_keys=True).encode('utf-8')
+        ds_hash = hashlib.sha256(canonical_bytes).hexdigest()[:16]
+    except Exception as e:
+        ds_hash = f"err_{type(e).__name__}"
+
+    git_sha = "unknown"
+    try:
+        git_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception as e:
+        git_sha = f"err_{type(e).__name__}"
+
+    print("=" * 100)
+    print(f"DATABASE: {db_path} | Dataset Rows SHA-256: {ds_hash}... | Git: {git_sha}")
+    print("=" * 100)
 
     data = [extract_features(r) for r in rows]
     base_res = analyze(data)
@@ -565,11 +564,11 @@ def run_backtest(db_path: str) -> None:
                 if dd > max_dd_sol:
                     max_dd_sol = dd
         elif ev['type'] == 'ENTRY':
-            if active_count >= max_slots or cash < (ev['size'] + 0.0005):
+            if active_count >= max_slots or cash < ev['size']:
                 skipped.append(ev['d'])
             else:
                 active_count += 1
-                cash -= (ev['size'] + 0.0005)
+                cash -= ev['size']
                 executed.append(ev['d'])
 
     exec_pnl = sum(d.get('pnl_sol', 0) - 0.0005 for d in executed)
@@ -582,6 +581,7 @@ def run_backtest(db_path: str) -> None:
     for d in executed:
         days_dict[d['day']].append(d['pnl_sol'] - 0.0005)
 
+    lcb95 = 0.0
     if len(days_dict) >= 5:
         import random
         random.seed(42)
@@ -594,6 +594,15 @@ def run_backtest(db_path: str) -> None:
                 resampled.extend(days_dict[k])
             b_means.append(sum(resampled) / len(resampled) if resampled else 0)
         b_means.sort()
+        try:
+            lcb95 = b_means[int(len(b_means) * 0.05)]
+            median = b_means[int(len(b_means) * 0.50)]
+            print(f"  Clustered Bootstrap (1,000 runs, {len(day_keys)} day-blocks): Median Expectancy: {median:+.5f} SOL/trade | 95% LCB: {lcb95:+.5f} SOL/trade")
+        except Exception:
+            print("  Clustered Bootstrap: Error calculating bounds")
+    else:
+        print("  Clustered Bootstrap: INCONCLUSIVE (< 5 daily blocks found)")
+
     # 3. CVaR 95% Tail Risk
     pnl_list = [d['pnl_sol'] - 0.0005 for d in executed]
     pnl_list.sort()
@@ -626,10 +635,12 @@ def run_backtest(db_path: str) -> None:
     pass_n = len(executed) >= 50
     pass_pf = pf >= 1.2
     pass_consist = day_consist >= 70.0
+    pass_lcb = lcb95 > 0
     print(f"    - Sample Size Floor (>=50): {'PASS' if pass_n else 'FAIL'} ({len(executed)} trades)")
     print(f"    - Profit Factor (>=1.20): {'PASS' if pass_pf else 'FAIL'} (PF: {pf:.2f})")
     print(f"    - Daily Consistency (>=70%): {'PASS' if pass_consist else 'FAIL'} ({day_consist:.1f}%)")
-    stage1_status = "STAGE_1_PASS" if (pass_n and pass_pf and pass_consist) else "STAGE_1_FAIL"
+    print(f"    - 95% Bootstrap LCB (>0): {'PASS' if pass_lcb else 'FAIL'} ({lcb95:+.5f} SOL/trade)")
+    stage1_status = "STAGE_1_PASS" if (pass_n and pass_pf and pass_consist and pass_lcb) else "STAGE_1_FAIL"
     print(f"    => Stage 1 Verdict: {stage1_status}")
 
 
@@ -693,8 +704,14 @@ def main() -> None:
         print("Error: No valid database files found via CLI, CHARON_DB_PATH, or ./data/*.sqlite", file=sys.stderr)
         sys.exit(1)
 
+    opts = {
+        'portfolio_sim': args.portfolio_sim,
+        'compare_all': args.compare_all,
+        'counterfactual': args.counterfactual,
+    }
+
     for path in db_paths:
-        run_backtest(path)
+        run_backtest(path, opts)
 
 
 if __name__ == '__main__':

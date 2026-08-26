@@ -3,6 +3,7 @@ import { now } from '../utils.js';
 
 // Bounded in-memory telemetry queue to prevent synchronous SQLite locks on ingestion path
 const telemetryQueue = [];
+const decisionQueue = [];
 let isFlushing = false;
 
 function safeJsonParse(val, fallback) {
@@ -24,17 +25,43 @@ export function recordSignalObservation(payload) {
   } else {
     console.warn(`[telemetry] queue full (${telemetryQueue.length}), dropping capture for ${payload.mint}`);
   }
-  // Schedule async flush
+  setImmediate(flushTelemetryQueue);
+  return true;
+}
+
+/**
+ * Enqueue decision outcome asynchronously.
+ */
+export function updateSignalDecision(signalIdOrMint, {
+  passedPrefilter = false,
+  failureReasons = [],
+  entryPriceUsd = null,
+  entryMcapUsd = null,
+  decisionAtMs = now(),
+} = {}) {
+  if (!signalIdOrMint) return false;
+  if (decisionQueue.length < 5000) {
+    decisionQueue.push({
+      signalIdOrMint,
+      passedPrefilter,
+      failureReasons,
+      entryPriceUsd,
+      entryMcapUsd,
+      decisionAtMs,
+    });
+  }
   setImmediate(flushTelemetryQueue);
   return true;
 }
 
 export function flushTelemetryQueue() {
-  if (isFlushing || !telemetryQueue.length) return;
+  if (isFlushing || (!telemetryQueue.length && !decisionQueue.length)) return;
   isFlushing = true;
   try {
-    const items = telemetryQueue.splice(0, 100);
-    const stmt = db.prepare(`
+    const insertItems = telemetryQueue.splice(0, 100);
+    const updateItems = decisionQueue.splice(0, 100);
+
+    const insertStmt = db.prepare(`
       INSERT INTO signal_captures (
         signal_id, mint, strategy_id, observed_at_ms, decision_at_ms,
         passed_prefilter, failure_reasons_json, entry_price_usd, entry_mcap_usd,
@@ -42,9 +69,23 @@ export function flushTelemetryQueue() {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const insertMany = db.transaction((rows) => {
-      for (const r of rows) {
-        stmt.run(
+    const updateStmt = db.prepare(`
+      UPDATE signal_captures
+      SET passed_prefilter = ?,
+          failure_reasons_json = ?,
+          entry_price_usd = COALESCE(?, entry_price_usd),
+          entry_mcap_usd = COALESCE(?, entry_mcap_usd),
+          decision_at_ms = ?
+      WHERE id = (
+        SELECT id FROM signal_captures
+        WHERE (signal_id = ? OR mint = ?)
+        ORDER BY id DESC LIMIT 1
+      )
+    `);
+
+    const runBatch = db.transaction(() => {
+      for (const r of insertItems) {
+        insertStmt.run(
           r.signalId || null,
           r.mint,
           r.strategyId || 'default',
@@ -59,56 +100,28 @@ export function flushTelemetryQueue() {
           now()
         );
       }
+
+      for (const u of updateItems) {
+        updateStmt.run(
+          u.passedPrefilter ? 1 : 0,
+          JSON.stringify(u.failureReasons || []),
+          Number.isFinite(Number(u.entryPriceUsd)) ? Number(u.entryPriceUsd) : null,
+          Number.isFinite(Number(u.entryMcapUsd)) ? Number(u.entryMcapUsd) : null,
+          u.decisionAtMs,
+          u.signalIdOrMint,
+          u.signalIdOrMint
+        );
+      }
     });
 
-    insertMany(items);
+    runBatch();
   } catch (err) {
     console.error(`[telemetry] flush error: ${err.message}`);
   } finally {
     isFlushing = false;
-    if (telemetryQueue.length > 0) {
+    if (telemetryQueue.length > 0 || decisionQueue.length > 0) {
       setImmediate(flushTelemetryQueue);
     }
-  }
-}
-
-/**
- * Update decision outcome for an existing signal observation.
- */
-export function updateSignalDecision(signalIdOrMint, {
-  passedPrefilter = false,
-  failureReasons = [],
-  entryPriceUsd = null,
-  entryMcapUsd = null,
-  decisionAtMs = now(),
-} = {}) {
-  try {
-    const stmt = db.prepare(`
-      UPDATE signal_captures
-      SET passed_prefilter = ?,
-          failure_reasons_json = ?,
-          entry_price_usd = COALESCE(?, entry_price_usd),
-          entry_mcap_usd = COALESCE(?, entry_mcap_usd),
-          decision_at_ms = ?
-      WHERE id = (
-        SELECT id FROM signal_captures
-        WHERE (signal_id = ? OR mint = ?)
-        ORDER BY id DESC LIMIT 1
-      )
-    `);
-    const res = stmt.run(
-      passedPrefilter ? 1 : 0,
-      JSON.stringify(failureReasons || []),
-      Number.isFinite(Number(entryPriceUsd)) ? Number(entryPriceUsd) : null,
-      Number.isFinite(Number(entryMcapUsd)) ? Number(entryMcapUsd) : null,
-      decisionAtMs,
-      signalIdOrMint,
-      signalIdOrMint
-    );
-    return res.changes > 0;
-  } catch (err) {
-    console.error(`[telemetry] updateSignalDecision error: ${err.message}`);
-    return false;
   }
 }
 
