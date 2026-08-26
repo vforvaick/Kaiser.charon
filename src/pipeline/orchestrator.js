@@ -19,6 +19,7 @@ import { setDegenHandler } from '../signals/trending.js';
 import { setCandidateHandler } from '../signals/feeClaim.js';
 import { short } from '../format.js';
 import { escapeHtml } from '../format.js';
+import { recordSignalObservation } from '../telemetry/forwardCapture.js';
 
 export const seenSignalCandidates = new Map();
 
@@ -28,6 +29,20 @@ setCandidateHandler(processCandidateFromSignals);
 export async function processCandidateFromSignals(signals) {
   // Load strategy early — needed for max position & duplicate checks below
   const strat = activeStrategy();
+
+  // Immutable pre-guard signal capture (Ticket 00)
+  try {
+    recordSignalObservation({
+      mint: signals?.mint,
+      signalId: signals?.signature || null,
+      strategyId: strat?.id || 'default',
+      observedAtMs: Date.now(),
+      metadata: { route: signals?.route, initialPrice: signals?.price },
+    });
+  } catch (err) {
+    // Non-blocking telemetry
+    console.error(`[telemetry] recordSignalObservation error: ${err.message}`);
+  }
 
   // Skip if max positions reached — don't waste enrichment/LLM calls
   if (!canOpenMorePositions()) {

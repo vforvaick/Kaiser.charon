@@ -57,6 +57,8 @@ def extract_features(row: sqlite3.Row) -> dict[str, Any]:
         'exit': row['exit_reason'] or '',
         'entry_mcap': row['entry_mcap'] or 0,
         'route': row['route'] or 'unknown',
+        'opened_at_ms': row['opened_at_ms'] or 0,
+        'closed_at_ms': row['closed_at_ms'] or 0,
         'day': datetime.fromtimestamp((row['opened_at_ms'] or 0) / 1000).strftime('%Y-%m-%d'),
 
         # Metrics
@@ -475,10 +477,10 @@ def run_backtest(db_path: str) -> None:
             print("    No filter improves PnL")
 
     # =========================================================================
-    # SECTION 5: Profile Replays (Obicle & El Ponny Evaluation - Ticket 03)
+    # SECTION 5: Profile Replays (Obicle & El Ponny Evaluation)
     # =========================================================================
     print("\n" + "=" * 80)
-    print("STRATEGY PROFILE REPLAY EVALUATION (Ticket 03)")
+    print("STRATEGY PROFILE REPLAY EVALUATION")
     print("=" * 80)
 
     # Obicle Degen: Mcap $7k-$20k, dev_migrations <= 7
@@ -506,6 +508,84 @@ def run_backtest(db_path: str) -> None:
         print(f"  [El Ponny Safe (Top10<=30%, Bundler<=30%, $30k-$150k)]: N={n} trades | WR={wr:.1f}% | PnL={pnl:+.4f} SOL | SL={sl} | TP={tp} | Avg={avg:+.2f}%")
     else:
         print("  [El Ponny Safe]: 0 matching trades found in sample")
+
+    # =========================================================================
+    # SECTION 6: Portfolio Capacity Simulation & Statistical Provenance (SPEC-004)
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("PORTFOLIO CAPACITY SIMULATION & STATISTICAL PROVENANCE (SPEC-004)")
+    print("=" * 80)
+
+    # 1. Chronological Event Simulator
+    events = []
+    for d in data:
+        opened_ms = d.get('opened_at_ms') or 0
+        closed_ms = d.get('closed_at_ms') or opened_ms + 1000
+        pnl = d.get('pnl_sol') or 0
+        size = 0.05
+        events.append({'type': 'ENTRY', 'time': opened_ms, 'prio': 2, 'pnl': pnl, 'size': size, 'd': d})
+        events.append({'type': 'EXIT', 'time': closed_ms, 'prio': 1, 'pnl': pnl, 'size': size, 'd': d})
+
+    events.sort(key=lambda x: (x['time'], x['prio']))
+
+    max_slots = 5
+    active_count = 0
+    executed = []
+    skipped = []
+    cash = 1.0
+    peak_equity = 1.0
+    max_dd_sol = 0.0
+
+    for ev in events:
+        if ev['type'] == 'EXIT':
+            if ev['d'] in executed:
+                active_count = max(0, active_count - 1)
+                cash += (ev['size'] + ev['pnl'] - 0.0005)
+                eq = cash + (active_count * ev['size'])
+                if eq > peak_equity:
+                    peak_equity = eq
+                dd = peak_equity - eq
+                if dd > max_dd_sol:
+                    max_dd_sol = dd
+        elif ev['type'] == 'ENTRY':
+            if active_count >= max_slots or cash < (ev['size'] + 0.0005):
+                skipped.append(ev['d'])
+            else:
+                active_count += 1
+                cash -= (ev['size'] + 0.0005)
+                executed.append(ev['d'])
+
+    exec_pnl = sum(d.get('pnl_sol', 0) - 0.0005 for d in executed)
+    print("  Fidelity Tier: Bounded-Modeled (Realized Portfolio Events)")
+    print(f"  Slots Limit: {max_slots} | Total Signals: {len(data)} | Executed: {len(executed)} | Capacity-Skipped: {len(skipped)} ({100*len(skipped)/len(data):.1f}%)" if data else "")
+    print(f"  Realized Net PnL: {exec_pnl:+.4f} SOL | Realized Max Drawdown: {max_dd_sol:.4f} SOL ({(max_dd_sol/peak_equity)*100:.1f}%)" if peak_equity > 0 else "")
+
+    # 2. Clustered Bootstrap (Day-Block)
+    days_dict = defaultdict(list)
+    for d in executed:
+        days_dict[d['day']].append(d['pnl_sol'] - 0.0005)
+
+    if len(days_dict) >= 5:
+        import random
+        random.seed(42)
+        day_keys = list(days_dict.keys())
+        b_means = []
+        for _ in range(1000):
+            resampled = []
+            for _ in range(len(day_keys)):
+                k = random.choice(day_keys)
+                resampled.extend(days_dict[k])
+            b_means.append(sum(resampled) / len(resampled) if resampled else 0)
+        b_means.sort()
+        try:
+            lcb95 = b_means[int(len(b_means) * 0.05)]
+            median = b_means[int(len(b_means) * 0.50)]
+            print(f"  Clustered Bootstrap (1,000 runs, {len(day_keys)} day-blocks): Median Expectancy: {median:+.5f} SOL/trade | 95% LCB: {lcb95:+.5f} SOL/trade")
+        except Exception:
+            print("  Clustered Bootstrap: Error calculating bounds")
+    else:
+        print("  Clustered Bootstrap: INCONCLUSIVE (< 5 daily blocks found)")
+
 
 
 

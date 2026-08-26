@@ -20,7 +20,7 @@ __pycache__/
 *.pyc
 .ruff_cache/
 *.zip
-backtest/
+/backtest/
 reports/
 models/
 backtest_*.py

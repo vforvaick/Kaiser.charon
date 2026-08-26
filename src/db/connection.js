@@ -145,6 +145,24 @@ export function initDb() {
       batch_json TEXT NOT NULL,
       execution_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS signal_captures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      signal_id TEXT,
+      mint TEXT NOT NULL,
+      strategy_id TEXT NOT NULL,
+      observed_at_ms INTEGER NOT NULL,
+      decision_at_ms INTEGER,
+      passed_prefilter INTEGER NOT NULL DEFAULT 0,
+      failure_reasons_json TEXT NOT NULL DEFAULT '[]',
+      entry_price_usd REAL,
+      entry_mcap_usd REAL,
+      forward_5m_price REAL,
+      forward_15m_price REAL,
+      forward_1h_price REAL,
+      capture_status TEXT NOT NULL DEFAULT 'pending',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at_ms INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS signal_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mint TEXT NOT NULL,
