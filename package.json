@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "test": "node --import ./test/setup.js --test test/*.test.js",
-    "check": "node --check index.js && node --check src/app.js && node --check src/config.js && node --check src/liveExecutor.js && node --check src/execution/circuitBreakers.js && node --check src/execution/router.js && node --check src/telemetry/forwardCapture.js && node --check src/backtest/portfolioSimulator.js && node --check src/backtest/statisticalRigor.js && node --check src/backtest/promotionScorecard.js && node --check src/backtest/counterfactualAnalyzer.js"
+    "check": "node --check index.js && node --check src/app.js && node --check src/config.js && node --check src/liveExecutor.js && node --check src/execution/circuitBreakers.js && node --check src/execution/router.js && node --check src/telemetry/forwardCapture.js && node --check src/backtest/portfolioSimulator.js && node --check src/backtest/statisticalRigor.js && node --check src/backtest/promotionScorecard.js && node --check src/backtest/counterfactualAnalyzer.js && node --check scripts/matrix_reporter.js && node --check scripts/run_counterfactual_analysis.js && node --check scripts/run_promotion_audit.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
