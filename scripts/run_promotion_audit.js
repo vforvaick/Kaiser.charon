@@ -17,7 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 
 export function runPromotionAudit(dbPath) {
-  const resolvedPath = path.isAbsolute(dbPath) ? dbPath : path.resolve(ROOT_DIR, dbPath);
+    const testDbPath = dbPath || process.env.DB_PATH || './charon.sqlite';
+    const resolvedPath = path.isAbsolute(testDbPath) ? testDbPath : path.resolve(ROOT_DIR, testDbPath);
   if (!fs.existsSync(resolvedPath)) {
     return { status: 'ERROR', error: `Database not found: ${resolvedPath}` };
   }
@@ -36,7 +37,8 @@ export function runPromotionAudit(dbPath) {
       return { status: 'ERROR', error: `No closed trades found in ${path.basename(resolvedPath)}` };
     }
 
-    const stratRow = dbHandle.prepare('SELECT id, config_json FROM strategies WHERE enabled = 1 LIMIT 1').get();
+    const stratRow = dbHandle.prepare('SELECT id, config_json FROM strategies WHERE enabled = 1 LIMIT 1').get()
+      || dbHandle.prepare('SELECT id, config_json FROM strategies LIMIT 1').get();
     let stratConfig = {};
     try { stratConfig = JSON.parse(stratRow?.config_json || '{}'); } catch {}
 

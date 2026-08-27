@@ -37,14 +37,13 @@ export function analyzeCounterfactualOutcomes(captures = [], {
     completeCount++;
     const gainPct = ((forward - entry) / entry) * 100;
     const isRunner = gainPct >= runnerGainPct;
-    const isRugOrLoss = gainPct <= rugLossPct || gainPct < 0;
     const passed = Boolean(cap.passed_prefilter ?? cap.passedPrefilter);
 
     if (passed && isRunner) {
       tp++;
     } else if (passed && !isRunner) {
       fp++;
-    } else if (!passed && isRugOrLoss) {
+    } else if (!passed && !isRunner) {
       tn++;
     } else if (!passed && isRunner) {
       fn++;

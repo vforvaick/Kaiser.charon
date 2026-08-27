@@ -19,7 +19,8 @@ export function runCounterfactualAudit(dbPath, {
   rugLossPct = -40.0,
   evaluationHorizon = 'forward_1h_price',
 } = {}) {
-  const resolvedPath = path.isAbsolute(dbPath) ? dbPath : path.resolve(ROOT_DIR, dbPath);
+  const targetPath = dbPath || process.env.DB_PATH || './charon.sqlite';
+  const resolvedPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(ROOT_DIR, targetPath);
   if (!fs.existsSync(resolvedPath)) {
     return { status: 'ERROR', error: `Database not found: ${resolvedPath}` };
   }
@@ -70,6 +71,17 @@ export function formatCounterfactualReport(result) {
   }
 
   const { filename, analysis } = result;
+  if (!analysis || analysis.status === 'INCONCLUSIVE') {
+    return [
+      '='.repeat(80),
+      `🔬 COUNTERFACTUAL SIGNAL & ALPHA LEAKAGE REPORT: ${filename}`,
+      '='.repeat(80),
+      `  Status: INCONCLUSIVE (${analysis?.reason || 'NO_CAPTURES_DUE_FOR_EVALUATION'})`,
+      `  Total Captures: ${analysis?.totalCaptures || 0}`,
+      '='.repeat(80),
+    ].join('\n');
+  }
+
   const { totalCaptures, evaluatedCompleteCount, incompleteOrMissingCount, confusionMatrix, metrics } = analysis;
 
   const lines = [
@@ -82,13 +94,13 @@ export function formatCounterfactualReport(result) {
     '',
     '📊 Filter Confusion Matrix:',
     `  • True Positives  (Filter Passed & Was Runner)  : ${confusionMatrix.truePositives}`,
-    `  • False Positives (Filter Passed & Was Rug/Loss) : ${confusionMatrix.falsePositives}`,
-    `  • True Negatives  (Filter Blocked & Was Rug/Loss): ${confusionMatrix.trueNegatives}`,
+    `  • False Positives (Filter Passed & Non-Runner)  : ${confusionMatrix.falsePositives}`,
+    `  • True Negatives  (Filter Blocked & Non-Runner) : ${confusionMatrix.trueNegatives}`,
     `  • False Negatives (Filter Blocked & Was Runner)  : ${confusionMatrix.falseNegatives}  <-- ALPHA LEAKAGE`,
     '',
     '📈 Diagnostic Ratios:',
     `  • Sensitivity (Recall of Runners) : ${metrics.sensitivityPct.toFixed(1)}%`,
-    `  • Specificity (Rejection of Rugs) : ${metrics.specificityPct.toFixed(1)}%`,
+    `  • Specificity (Rejection of Non-Runners) : ${metrics.specificityPct.toFixed(1)}%`,
     `  • Precision (Hit Rate on Entries) : ${metrics.precisionPct.toFixed(1)}%`,
     `  • Total Missed Runner Gains       : +${metrics.totalMissedGainPct.toFixed(1)}%`,
   ];
@@ -108,12 +120,19 @@ export function formatCounterfactualReport(result) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = process.argv.slice(2);
   let dbArg = './data/sniper_rules.sqlite';
+  let runnerArg = 25.0;
+  let horizonArg = 'forward_1h_price';
+
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--db' && args[i + 1]) {
       dbArg = args[i + 1];
+    } else if (args[i] === '--runner' && args[i + 1]) {
+      runnerArg = Number(args[i + 1]) || 25.0;
+    } else if (args[i] === '--horizon' && args[i + 1]) {
+      horizonArg = args[i + 1].includes('price') ? args[i + 1] : `forward_${args[i + 1]}_price`;
     }
   }
 
-  const res = runCounterfactualAudit(dbArg);
+  const res = runCounterfactualAudit(dbArg, { runnerGainPct: runnerArg, evaluationHorizon: horizonArg });
   console.log(formatCounterfactualReport(res));
 }
