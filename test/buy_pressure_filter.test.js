@@ -1,8 +1,10 @@
 import assert from 'node:assert';
 import test from 'node:test';
 import { filterCandidate } from '../src/pipeline/candidateBuilder.js';
-import { db } from '../src/db/connection.js';
+import { db, initDb } from '../src/db/connection.js';
 import * as settings from '../src/db/settings.js';
+
+initDb();
 
 // Helper: run filterCandidate with ephemeral strategy override (bust 5s strategyCache)
 function withStrategy(overrides, fn) {
