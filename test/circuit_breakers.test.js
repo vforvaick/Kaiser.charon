@@ -154,4 +154,27 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
       delete db.prepare; // removes own property so prototype method is restored cleanly
     }
   });
+
+  it('blocks executeLiveBuy directly at router level when candidate quote is stale', async () => {
+    const { executeLiveBuy } = await import('../src/execution/router.js');
+    const staleCandidateRow = {
+      id: 999,
+      created_at_ms: Date.now() - 40_000, // 40 seconds ago (>30s limit)
+      candidate: {
+        token: { mint: 'staleMint111111111111111111111111111', symbol: 'STALE' },
+        createdAtMs: Date.now() - 40_000,
+        filters: { passed: true },
+      },
+    };
+
+    await assert.rejects(
+      async () => {
+        await executeLiveBuy(staleCandidateRow, { verdict: 'BUY', confidence: 90 }, 1);
+      },
+      (err) => {
+        assert.ok(err.message.includes('STALE_QUOTE'));
+        return true;
+      }
+    );
+  });
 });
