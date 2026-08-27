@@ -1,0 +1,82 @@
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  canOpenPositionRiskCheck,
+  tripCircuitBreaker,
+  resetCircuitBreaker,
+  getCircuitBreakerStatus,
+  RISK_LIMITS,
+} from '../src/execution/circuitBreakers.js';
+import { db, initDb } from '../src/db/connection.js';
+
+initDb();
+
+describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () => {
+  beforeEach(() => {
+    // Reset all breakers and clear test positions before test
+    db.prepare('DELETE FROM risk_circuit_breakers').run();
+    db.prepare("DELETE FROM dry_run_positions WHERE mint = 'lossMint'").run();
+  });
+
+  it('allows entry when system is healthy and no limits are breached', () => {
+    const res = canOpenPositionRiskCheck({ quoteAgeMs: 5000, slippageBps: 100 });
+    assert.equal(res.allowed, true);
+  });
+
+  it('blocks entry when quote is stale (>30s)', () => {
+    const res = canOpenPositionRiskCheck({ quoteAgeMs: 35000, slippageBps: 100 });
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('STALE_QUOTE'));
+  });
+
+  it('blocks entry when slippage exceeds threshold (>500 bps)', () => {
+    const res = canOpenPositionRiskCheck({ quoteAgeMs: 5000, slippageBps: 600 });
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('EXCESSIVE_SLIPPAGE'));
+  });
+
+  it('latches circuit breaker on 3 consecutive losses and blocks entry', () => {
+    // Insert 3 recent consecutive loss positions
+    const ts = Date.now();
+    for (let i = 0; i < 3; i++) {
+      db.prepare(`
+        INSERT INTO dry_run_positions (
+          candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+          trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
+        ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0075, -15.0, '{}')
+      `).run(ts - (3 - i) * 1000, ts - (3 - i) * 500);
+    }
+
+    const res = canOpenPositionRiskCheck();
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('CONSECUTIVE_LOSS_LIMIT'));
+
+    // Verify latch is persistent
+    const status = getCircuitBreakerStatus('CONSECUTIVE_LOSS_LIMIT');
+    assert.equal(status.isLatched, true);
+    assert.equal(status.tripCount, 1);
+
+    // Reset breaker manually
+    const reset = resetCircuitBreaker('CONSECUTIVE_LOSS_LIMIT');
+    assert.equal(reset, true);
+
+    const afterReset = getCircuitBreakerStatus('CONSECUTIVE_LOSS_LIMIT');
+    assert.equal(afterReset.isLatched, false);
+  });
+
+  it('latches circuit breaker on daily loss reaching 0.025 SOL', () => {
+    const todayTs = new Date().setUTCHours(1, 0, 0, 0);
+    db.prepare(`
+      INSERT INTO dry_run_positions (
+        candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0260, -52.0, '{}')
+    `).run(todayTs, todayTs + 1000);
+
+    const res = canOpenPositionRiskCheck();
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('DAILY_LOSS_LIMIT'));
+
+    resetCircuitBreaker('DAILY_LOSS_LIMIT');
+  });
+});

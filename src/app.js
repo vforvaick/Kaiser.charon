@@ -102,22 +102,25 @@ export async function startCharon() {
     }, POSITION_CHECK_MS);
   }, initialJitterMs);
 
-  // Forward telemetry mark resolver (runs every 60s to resolve pending 5m/15m/1h marks)
-  const { resolvePendingForwardMarks } = await import('./telemetry/forwardCapture.js');
-  const { fetchJupiterAsset } = await import('./enrichment/jupiter.js');
-  let forwardResolverRunning = false;
-  setInterval(async () => {
-    if (forwardResolverRunning) return;
-    forwardResolverRunning = true;
-    try {
-      await resolvePendingForwardMarks(async (mint) => {
-        const asset = await fetchJupiterAsset(mint);
-        return asset?.usdPrice || asset?.price || null;
-      }, { maxBatch: 20 });
-    } catch {
-      // Non-blocking telemetry
-    } finally {
-      forwardResolverRunning = false;
-    }
-  }, 60_000);
+  // Forward telemetry mark resolver (runs every 60s only on designated single worker)
+  if (process.env.ENABLE_FORWARD_RESOLVER === 'true') {
+    const { resolvePendingForwardMarks } = await import('./telemetry/forwardCapture.js');
+    const { fetchJupiterAsset } = await import('./enrichment/jupiter.js');
+    let forwardResolverRunning = false;
+    setInterval(async () => {
+      if (forwardResolverRunning) return;
+      forwardResolverRunning = true;
+      try {
+        await resolvePendingForwardMarks(async (mint) => {
+          const asset = await fetchJupiterAsset(mint);
+          return asset?.usdPrice || asset?.price || null;
+        }, { maxBatch: 20 });
+      } catch {
+        // Non-blocking telemetry
+      } finally {
+        forwardResolverRunning = false;
+      }
+    }, 60_000);
+    console.log(`[telemetry] Forward mark resolver worker active on ${APP_NAME}`);
+  }
 }

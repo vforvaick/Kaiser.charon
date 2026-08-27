@@ -163,6 +163,16 @@ export function initDb() {
       metadata_json TEXT NOT NULL DEFAULT '{}',
       created_at_ms INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS risk_circuit_breakers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      breaker_type TEXT NOT NULL UNIQUE,
+      is_latched INTEGER NOT NULL DEFAULT 0,
+      latched_at_ms INTEGER,
+      trip_reason TEXT,
+      trip_count INTEGER NOT NULL DEFAULT 0,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      updated_at_ms INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS signal_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mint TEXT NOT NULL,
@@ -374,7 +384,7 @@ export function initDb() {
     require_fee_claim: false,
     token_age_max_ms: 3600000,
     min_mcap_usd: 25000,
-    max_mcap_usd: 100000,
+    max_mcap_usd: 80000,
     min_fee_claim_sol: 0,
     min_gmgn_total_fee_sol: 0,
     min_holders: 30,

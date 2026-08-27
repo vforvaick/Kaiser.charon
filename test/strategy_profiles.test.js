@@ -44,12 +44,12 @@ function makeCandidate({ mcap = 45000, maxHolder = 5, top10Pct = 25, holdersList
   };
 }
 
-describe('Ticket 01: Canonical Degen Strategy Profile', () => {
-  it('loads canonical degen strategy with exact empirical parameters', () => {
+describe('Ticket 01 & SPEC-005: Canonical Degen Strategy Profile', () => {
+  it('loads canonical degen strategy with tuned parameters ($25k-$80k mcap)', () => {
     const strat = settings.strategyById('degen');
     assert.ok(strat, 'Degen strategy exists');
     assert.equal(strat.min_mcap_usd, 25000);
-    assert.equal(strat.max_mcap_usd, 100000);
+    assert.equal(strat.max_mcap_usd, 80000);
     assert.equal(strat.tp_percent, 30);
     assert.equal(strat.sl_percent, -15);
     assert.equal(strat.trailing_enabled, true);
@@ -66,15 +66,15 @@ describe('Ticket 01: Canonical Degen Strategy Profile', () => {
     });
   });
 
-  it('rejects candidates above $100k mcap when degen is active', () => {
+  it('rejects candidates above $80k mcap when degen is active', () => {
     withStrategy('degen', {}, () => {
-      const res = filterCandidate(makeCandidate({ mcap: 105000 }));
+      const res = filterCandidate(makeCandidate({ mcap: 85000 }));
       assert.equal(res.passed, false);
-      assert.ok(res.failures.some(f => f.includes('market cap max: 105000 > 100000')));
+      assert.ok(res.failures.some(f => f.includes('market cap max: 85000 > 80000')));
     });
   });
 
-  it('passes candidates inside the $25k-$100k sweet spot (e.g. $45k)', () => {
+  it('passes candidates inside the $25k-$80k sweet spot (e.g. $45k)', () => {
     withStrategy('degen', {}, () => {
       const res = filterCandidate(makeCandidate({ mcap: 45000 }));
       assert.equal(res.passed, true);

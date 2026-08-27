@@ -33,7 +33,18 @@ export function evaluatePromotionScorecard({
   const positiveDays = Array.from(daysMap.values()).filter(p => p > 0).length;
   const dailyConsistencyPct = totalDays > 0 ? (positiveDays / totalDays) * 100 : 0;
 
-  // 3. Stage 1 Evaluation Checks
+  // 3. Multi-window chronological stability (First Half vs Second Half PnL)
+  let firstHalfPnl = 0;
+  let secondHalfPnl = 0;
+  if (trades.length >= 2) {
+    const sortedTrades = [...trades].sort((a, b) => (a.opened_at_ms || a.closedAtMs || 0) - (b.opened_at_ms || b.closedAtMs || 0));
+    const mid = Math.floor(sortedTrades.length / 2);
+    firstHalfPnl = sortedTrades.slice(0, mid).reduce((sum, t) => sum + (t.netPnl || t.pnl_sol || 0), 0);
+    secondHalfPnl = sortedTrades.slice(mid).reduce((sum, t) => sum + (t.netPnl || t.pnl_sol || 0), 0);
+  }
+  const passesTwoWindows = firstHalfPnl > 0 && secondHalfPnl > 0;
+
+  // 4. Stage 1 Evaluation Checks
   const checks = [
     {
       name: 'Sample Size Floor',
@@ -61,6 +72,13 @@ export function evaluatePromotionScorecard({
       passed: bootstrapStats.status === 'COMPLETE' && bootstrapStats.lcb95Sol > 0,
       value: bootstrapStats.status === 'COMPLETE' ? `${bootstrapStats.lcb95Sol > 0 ? '+' : ''}${bootstrapStats.lcb95Sol.toFixed(5)} SOL/trade` : (bootstrapStats.reason || 'N/A'),
       threshold: 'LCB > 0 (Positive edge confirmed)',
+      critical: true,
+    },
+    {
+      name: 'Two Non-Overlapping Windows Stability',
+      passed: passesTwoWindows,
+      value: `H1: ${firstHalfPnl > 0 ? '+' : ''}${firstHalfPnl.toFixed(4)} SOL | H2: ${secondHalfPnl > 0 ? '+' : ''}${secondHalfPnl.toFixed(4)} SOL`,
+      threshold: 'Both H1 & H2 > 0 SOL',
       critical: true,
     },
     {

@@ -17,6 +17,7 @@ import { executeLiveBuy } from '../execution/router.js';
 import { graduated } from '../signals/graduated.js';
 import { setDegenHandler } from '../signals/trending.js';
 import { setCandidateHandler } from '../signals/feeClaim.js';
+import { canOpenPositionRiskCheck } from '../execution/circuitBreakers.js';
 import { short } from '../format.js';
 import { escapeHtml } from '../format.js';
 import { recordSignalObservation, updateSignalDecision } from '../telemetry/forwardCapture.js';
@@ -39,7 +40,7 @@ export async function processCandidateFromSignals(signals) {
       observedAtMs: Date.now(),
       metadata: { route: signals?.route, initialPrice: signals?.price },
     });
-  } catch (err) {
+  } catch {
     // Non-blocking telemetry
     console.error(`[telemetry] recordSignalObservation error: ${err.message}`);
   }
@@ -86,7 +87,7 @@ export async function processCandidateFromSignals(signals) {
         return;
       }
     }
-  } catch (err) {
+  } catch {
     // DB check failed — proceed anyway
   }
 
@@ -102,7 +103,7 @@ export async function processCandidateFromSignals(signals) {
       console.log(`[agent] skipping ${signals.mint.slice(0, 8)}... — recent candidate (<10min) for any route`);
       return;
     }
-  } catch (err) {
+  } catch {
     // DB check failed — proceed anyway
   }
 
@@ -131,7 +132,7 @@ export async function processCandidateFromSignals(signals) {
         return;
       }
     }
-  } catch (err) {
+  } catch {
     // DB check failed — proceed anyway
   }
 
@@ -170,7 +171,7 @@ export async function processCandidateFromSignals(signals) {
       entryPriceUsd: candidate.metrics?.priceUsd || null,
       entryMcapUsd: candidate.metrics?.marketCapUsd || null,
     });
-  } catch (err) {
+  } catch {
     // Non-blocking telemetry
     console.error(`[telemetry] updateSignalDecision error: ${err.message}`);
   }
@@ -241,23 +242,24 @@ export async function processCandidateFromSignals(signals) {
 
   // #6: Buy the LLM's selected candidate regardless of which candidate triggered the batch
   if (selectedRow && boolSetting('agent_enabled', true) && batchDecision.verdict === 'BUY' && batchDecision.confidence >= numSetting('llm_min_confidence')) {
-    if (!canOpenMorePositions()) {
-      const max = numSetting('max_open_positions', 3);
-      console.log(`[agent] max open positions reached (${openPositionCount()}/${max}), skipping buy ${selectedRow.candidate.token.mint}`);
+    // Check risk circuit breakers before executing entry (Ticket 01 SPEC-005)
+    const riskCheck = canOpenPositionRiskCheck({ strategyId: strat?.id });
+    if (!riskCheck.allowed) {
+      console.warn(`[risk] entry blocked for ${selectedRow.candidate.token.mint}: ${riskCheck.reason}`);
       logDecisionEvent({
         batchId,
         triggerCandidateId: candidateId,
         selectedRow,
         rows,
         decision: batchDecision,
-        action: 'entry_skipped_max_positions',
-        guardrails: { maxOpenPositions: max, openPositions: openPositionCount() },
+        action: 'entry_blocked_circuit_breaker',
+        guardrails: { reason: riskCheck.reason },
       });
       return;
     }
     try {
       await handleApprovedBuy(selectedRow, batchDecision, batchId, rows, candidateId);
-    } catch (err) {
+    } catch {
       console.error(`[orchestrator] handleApprovedBuy failed for ${selectedRow.candidate.token.mint}: ${err.message}`);
       logDecisionEvent({
         batchId,
@@ -338,7 +340,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
       isNew = result.isNew;
       pastWinPnlSol = result.pastWinPnlSol;
       pastWinClosedAtMs = result.pastWinClosedAtMs;
-    } catch (err) {
+    } catch {
       console.error(`[orchestrator] createDryRunPosition failed for ${freshSelectedRow.candidate.token.mint}: ${err.message}`);
       logDecisionEvent({
         batchId,
@@ -437,7 +439,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
 
   try {
     await executeLiveBuy(freshSelectedRow, decision, batchId, executionRows, triggerCandidateId);
-  } catch (err) {
+  } catch {
     const intentId = createTradeIntent(freshSelectedRow.id, freshSelectedRow.candidate, decision, mode, 'execution_failed');
     logDecisionEvent({
       batchId,
