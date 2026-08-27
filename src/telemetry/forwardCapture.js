@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { db } from '../db/connection.js';
+import { DB_PATH } from '../config.js';
 import { now } from '../utils.js';
 
 // Bounded in-memory telemetry queue to prevent synchronous SQLite locks on ingestion path
@@ -152,24 +153,26 @@ export function updateForwardPriceMarks(id, {
 
 /**
  * Rate-limited forward price mark resolver for due horizons (5m, 15m, 1h).
- * Iterates across all matrix cell SQLite databases when running in multi-cell mode.
+ * Iterates across matrix cell SQLite databases without duplicate processing, enforcing a single global batch budget.
  */
 export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, scanAllDatabases = true } = {}) {
   if (typeof priceFetcher !== 'function') return { resolved: 0, pending: 0 };
   const currentTime = now();
 
+  const currentAbsPath = path.resolve(DB_PATH || './charon.sqlite');
   const targetDbs = [];
-  targetDbs.push({ name: 'current', dbHandle: db, shouldClose: false });
+  targetDbs.push({ name: 'current', dbHandle: db, path: currentAbsPath, shouldClose: false });
 
   if (scanAllDatabases) {
     const dataDir = path.resolve('./data');
     if (fs.existsSync(dataDir)) {
       const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.sqlite'));
       for (const f of files) {
+        const fullPath = path.join(dataDir, f);
+        if (fullPath === currentAbsPath) continue; // Deduplicate: do not reopen current DB
         try {
-          const fullPath = path.join(dataDir, f);
           const cellDb = new Database(fullPath);
-          targetDbs.push({ name: f, dbHandle: cellDb, shouldClose: true });
+          targetDbs.push({ name: f, dbHandle: cellDb, path: fullPath, shouldClose: true });
         } catch {
           // ignore busy/locked
         }
@@ -179,22 +182,32 @@ export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, 
 
   let totalResolved = 0;
   let totalPending = 0;
+  let remainingBudget = maxBatch;
 
   for (const item of targetDbs) {
+    if (remainingBudget <= 0) {
+      if (item.shouldClose) {
+        try { item.dbHandle.close(); } catch {}
+      }
+      continue;
+    }
+
     try {
       // Check if table exists
       const tableExists = item.dbHandle.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='signal_captures'").get();
       if (!tableExists) continue;
 
+      const fetchLimit = Math.min(20, remainingBudget);
       const pendingRows = item.dbHandle.prepare(`
         SELECT * FROM signal_captures
         WHERE capture_status = 'pending' AND observed_at_ms <= ?
         ORDER BY observed_at_ms ASC LIMIT ?
-      `).all(currentTime - 300_000, maxBatch);
+      `).all(currentTime - 300_000, fetchLimit);
 
       totalPending += pendingRows.length;
 
       for (const row of pendingRows) {
+        if (remainingBudget <= 0) break;
         try {
           const price = await priceFetcher(row.mint);
           if (price != null && Number.isFinite(Number(price))) {
@@ -214,6 +227,7 @@ export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, 
             `).run(forward5m, forward15m, forward1h, captureStatus, row.id);
 
             totalResolved++;
+            remainingBudget--;
           }
         } catch {
           // fetch error

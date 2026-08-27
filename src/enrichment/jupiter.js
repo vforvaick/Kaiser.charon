@@ -19,8 +19,8 @@ function setJupiterAssetBackoff(err) {
 
 let quoteBackoffUntil = 0;
 
-function quoteBackoffActive() {
-  return now() < quoteBackoffUntil;
+export function isJupiterApiBackoffActive() {
+  return now() < jupiterAssetBackoffUntil || now() < quoteBackoffUntil;
 }
 
 function setQuoteBackoff(err) {
@@ -282,7 +282,7 @@ async function fetchSolUsdPriceCached() {
 // Fixed 1000-token reference amount ignores price impact for large sizes —
 // upgrade to position-sized quotes when size_sol > 1.
 async function fetchTokenSpotViaQuote(mint) {
-  if (quoteBackoffActive()) return null;
+  if (isJupiterApiBackoffActive()) return null;
   try {
     const url = new URL('https://lite-api.jup.ag/swap/v1/quote');
     url.searchParams.set('inputMint', mint);

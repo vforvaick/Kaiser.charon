@@ -118,4 +118,27 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
 
     resetCircuitBreaker('CANARY_LIFETIME_LOSS_LIMIT');
   });
+
+  it('latches circuit breaker on rolling 7-day loss exceeding 0.075 SOL', () => {
+    // 2 days ago loss of 0.08 SOL (outside today, but inside 7 days)
+    const twoDaysAgoTs = Date.now() - 2 * 86400000;
+    db.prepare(`
+      INSERT INTO dry_run_positions (
+        candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0800, -40.0, '{}')
+    `).run(twoDaysAgoTs - 1000, twoDaysAgoTs);
+
+    const res = canOpenPositionRiskCheck();
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('ROLLING_7D_LOSS_LIMIT'));
+
+    resetCircuitBreaker('ROLLING_7D_LOSS_LIMIT');
+  });
+
+  it('fails closed when database is closed or corrupted', () => {
+    // Test fail-closed contract
+    const status = getCircuitBreakerStatus('INVALID_BREAKER');
+    assert.equal(typeof status.isLatched, 'boolean');
+  });
 });

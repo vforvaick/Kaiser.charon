@@ -15,6 +15,7 @@ import { sendPositionOpen, sendTelegram } from '../telegram/send.js';
 import { updateCandidateStatus } from '../db/candidates.js';
 import { createTradeIntent } from '../db/intents.js';
 import { canOpenPositionRiskCheck } from './circuitBreakers.js';
+import { isJupiterApiBackoffActive } from '../enrichment/jupiter.js';
 
 const ENTRY_MAX_ATTEMPTS = 3;
 
@@ -33,7 +34,10 @@ export async function executeLiveBuy(selectedRow, decision, batchId, rows = [], 
   return withEntryLock(async () => {
     // 1. Mandatory Risk Circuit Breaker Pre-Swap Gate (Ticket 01 SPEC-005)
     const strat = activeStrategy();
-    const riskCheck = canOpenPositionRiskCheck({ strategyId: strat?.id });
+    const riskCheck = canOpenPositionRiskCheck({
+      _strategyId: strat?.id,
+      isApiBackoffActive: isJupiterApiBackoffActive(),
+    });
     if (!riskCheck.allowed) {
       const msg = `Entry blocked by risk circuit breaker: ${riskCheck.reason}`;
       console.warn(`[executeLiveBuy] ${msg}`);
@@ -138,7 +142,7 @@ export async function executeLiveBuy(selectedRow, decision, batchId, rows = [], 
   });
 }
 
-export async function executeLiveSell(position, reason) {
+export async function executeLiveSell(position, _reason) {
   const amount = position.token_amount_raw || position.token_amount_est;
   if (!amount || Number(amount) <= 0) throw new Error('Live position has no token amount to sell.');
   return executeJupiterSwap({
@@ -176,7 +180,10 @@ export async function executeConfirmedIntent(chatId, intentId) {
     // would let a concurrent entry pass checkEntryGuards and duplicate-swap.
     const result = await withEntryLock(async () => {
       const strat = activeStrategy();
-      const riskCheck = canOpenPositionRiskCheck({ strategyId: strat?.id });
+      const riskCheck = canOpenPositionRiskCheck({
+        _strategyId: strat?.id,
+        isApiBackoffActive: isJupiterApiBackoffActive(),
+      });
       if (!riskCheck.allowed) {
         throw new Error(`Entry blocked by risk circuit breaker: ${riskCheck.reason}`);
       }

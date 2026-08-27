@@ -45,11 +45,12 @@ describe('Ticket 00: Forward Capture & Immutability Schema', () => {
     assert.equal(match.entry_price_usd, 0.001);
   });
 
-  it('resolves pending forward price marks asynchronously via rate-limited worker', async () => {
+  it('resolves pending forward price marks asynchronously with global budget cap and deduplication', async () => {
     const mockPriceFetcher = async (_mint) => 0.0025;
-    const res = await resolvePendingForwardMarks(mockPriceFetcher, { maxBatch: 10 });
+    const res = await resolvePendingForwardMarks(mockPriceFetcher, { maxBatch: 10, scanAllDatabases: true });
     assert.ok(typeof res.resolved === 'number');
     assert.ok(typeof res.pending === 'number');
+    assert.ok(res.resolved <= 10, 'Resolved marks should not exceed maxBatch budget');
   });
 });
 
