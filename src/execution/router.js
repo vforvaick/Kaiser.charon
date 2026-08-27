@@ -34,8 +34,14 @@ export async function executeLiveBuy(selectedRow, decision, batchId, rows = [], 
   return withEntryLock(async () => {
     // 1. Mandatory Risk Circuit Breaker Pre-Swap Gate (Ticket 01 SPEC-005)
     const strat = activeStrategy();
+    const quoteTime = selectedRow.candidate?.executionRefresh?.refreshedAtMs || selectedRow.candidate?.created_at_ms || now();
+    const quoteAgeMs = Math.max(0, now() - quoteTime);
+    const slippageBps = numSetting('jupiter_slippage_bps', 100);
+
     const riskCheck = canOpenPositionRiskCheck({
       _strategyId: strat?.id,
+      quoteAgeMs,
+      slippageBps,
       isApiBackoffActive: isJupiterApiBackoffActive(),
     });
     if (!riskCheck.allowed) {
@@ -180,8 +186,14 @@ export async function executeConfirmedIntent(chatId, intentId) {
     // would let a concurrent entry pass checkEntryGuards and duplicate-swap.
     const result = await withEntryLock(async () => {
       const strat = activeStrategy();
+      const quoteTime = freshRow.candidate?.executionRefresh?.refreshedAtMs || freshRow.candidate?.created_at_ms || now();
+      const quoteAgeMs = Math.max(0, now() - quoteTime);
+      const slippageBps = numSetting('jupiter_slippage_bps', 100);
+
       const riskCheck = canOpenPositionRiskCheck({
         _strategyId: strat?.id,
+        quoteAgeMs,
+        slippageBps,
         isApiBackoffActive: isJupiterApiBackoffActive(),
       });
       if (!riskCheck.allowed) {
