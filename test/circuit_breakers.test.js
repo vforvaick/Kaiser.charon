@@ -137,10 +137,12 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
   });
 
   it('fails closed when database is closed or encounters a query error', () => {
-    // Force a runtime query error by passing an object that triggers a failure or simulating closed/corrupt state
-    const originalPrepare = db.prepare;
     try {
-      db.prepare = () => { throw new Error('Simulated SQLite disk/lock error'); };
+      Object.defineProperty(db, 'prepare', {
+        value: () => { throw new Error('Simulated SQLite disk/lock error'); },
+        writable: true,
+        configurable: true,
+      });
       const status = getCircuitBreakerStatus();
       assert.equal(status.isAnyLatched, true);
       assert.ok(status.latchedBreakers[0].tripReason.includes('Simulated SQLite disk/lock error'));
@@ -149,7 +151,7 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
       assert.equal(res.allowed, false);
       assert.ok(res.reason.includes('RISK_CHECK_UNAVAILABLE'));
     } finally {
-      db.prepare = originalPrepare;
+      delete db.prepare; // removes own property so prototype method is restored cleanly
     }
   });
 });

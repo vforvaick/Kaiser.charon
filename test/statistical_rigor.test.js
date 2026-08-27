@@ -10,12 +10,13 @@ import {
 } from '../src/telemetry/forwardCapture.js';
 import { analyzeCounterfactualOutcomes } from '../src/backtest/counterfactualAnalyzer.js';
 import { evaluatePromotionScorecard } from '../src/backtest/promotionScorecard.js';
-import { initDb } from '../src/db/connection.js';
+import { initDb, db } from '../src/db/connection.js';
 
 initDb();
 
 describe('Ticket 00: Forward Capture & Immutability Schema', () => {
   it('enqueues signal observation, flushes queue, and updates decision outcomes', () => {
+    db.prepare('DELETE FROM signal_captures').run();
     const mint = 'testSignalCaptureMint11111111111111111111';
     recordSignalObservation({
       mint,
@@ -46,19 +47,41 @@ describe('Ticket 00: Forward Capture & Immutability Schema', () => {
   });
 
   it('resolves pending forward price marks asynchronously with strict global fetch budget cap', async () => {
+    // Clear test signal captures to isolate budget test
+    db.prepare("DELETE FROM signal_captures WHERE signal_id LIKE 'due_sig_%'").run();
+
+    // Insert 10 pending test captures due for resolution (>5m ago)
+    const oldTs = Date.now() - 400_000;
+    for (let i = 1; i <= 10; i++) {
+      db.prepare(`
+        INSERT INTO signal_captures (
+          signal_id, mint, strategy_id, observed_at_ms, decision_at_ms,
+          passed_prefilter, failure_reasons_json, entry_price_usd, entry_mcap_usd,
+          capture_status, metadata_json, created_at_ms
+        ) VALUES (?, ?, 'sniper', ?, ?, 1, '[]', 0.001, 50000, 'pending', '{}', ?)
+      `).run(`due_sig_${i}`, `due_mint_${i}`, oldTs, oldTs, oldTs);
+    }
+
     let fetchAttempts = 0;
-    // Mock price fetcher that counts attempts and intermittently fails/returns null
+    // Mock price fetcher that throws on attempt 1, returns null on attempt 2, and returns price on attempt 3+
     const mockPriceFetcher = async (_mint) => {
       fetchAttempts++;
-      if (fetchAttempts % 2 === 0) return null; // simulate failure
-      return 0.0025;
+      if (fetchAttempts === 1) throw new Error('Simulated network error');
+      if (fetchAttempts === 2) return null; // Price unavailable
+      return 0.0025; // Success
     };
 
     const maxBudget = 5;
-    const res = await resolvePendingForwardMarks(mockPriceFetcher, { maxBatch: maxBudget, scanAllDatabases: true });
+    const res = await resolvePendingForwardMarks(mockPriceFetcher, { maxBatch: maxBudget, scanAllDatabases: false });
+
     assert.ok(typeof res.resolved === 'number');
     assert.ok(typeof res.pending === 'number');
-    assert.ok(fetchAttempts <= maxBudget, `Fetch attempts (${fetchAttempts}) must not exceed maxBatch budget (${maxBudget})`);
+    // Strictly prove that fetch attempts exactly reached maxBudget (5) and did not exceed it despite failures/exceptions
+    assert.equal(fetchAttempts, maxBudget, `Fetch attempts (${fetchAttempts}) must strictly equal maxBudget (${maxBudget})`);
+    assert.ok(res.resolved > 0 && res.resolved < maxBudget, 'Only non-failing attempts should be resolved');
+
+    // Clean up test rows
+    db.prepare("DELETE FROM signal_captures WHERE signal_id LIKE 'due_sig_%'").run();
   });
 });
 
