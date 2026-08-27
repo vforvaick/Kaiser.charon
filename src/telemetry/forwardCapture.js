@@ -208,6 +208,7 @@ export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, 
 
       for (const row of pendingRows) {
         if (remainingBudget <= 0) break;
+        remainingBudget--; // Consume 1 fetch attempt immediately before call
         try {
           const price = await priceFetcher(row.mint);
           if (price != null && Number.isFinite(Number(price))) {
@@ -227,7 +228,6 @@ export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, 
             `).run(forward5m, forward15m, forward1h, captureStatus, row.id);
 
             totalResolved++;
-            remainingBudget--;
           }
         } catch {
           // fetch error

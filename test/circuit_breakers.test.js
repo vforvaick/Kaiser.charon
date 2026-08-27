@@ -136,9 +136,20 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
     resetCircuitBreaker('ROLLING_7D_LOSS_LIMIT');
   });
 
-  it('fails closed when database is closed or corrupted', () => {
-    // Test fail-closed contract
-    const status = getCircuitBreakerStatus('INVALID_BREAKER');
-    assert.equal(typeof status.isLatched, 'boolean');
+  it('fails closed when database is closed or encounters a query error', () => {
+    // Force a runtime query error by passing an object that triggers a failure or simulating closed/corrupt state
+    const originalPrepare = db.prepare;
+    try {
+      db.prepare = () => { throw new Error('Simulated SQLite disk/lock error'); };
+      const status = getCircuitBreakerStatus();
+      assert.equal(status.isAnyLatched, true);
+      assert.ok(status.latchedBreakers[0].tripReason.includes('Simulated SQLite disk/lock error'));
+
+      const res = canOpenPositionRiskCheck();
+      assert.equal(res.allowed, false);
+      assert.ok(res.reason.includes('RISK_CHECK_UNAVAILABLE'));
+    } finally {
+      db.prepare = originalPrepare;
+    }
   });
 });
