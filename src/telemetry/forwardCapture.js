@@ -1,3 +1,6 @@
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 import { db } from '../db/connection.js';
 import { now } from '../utils.js';
 
@@ -149,41 +152,83 @@ export function updateForwardPriceMarks(id, {
 
 /**
  * Rate-limited forward price mark resolver for due horizons (5m, 15m, 1h).
+ * Iterates across all matrix cell SQLite databases when running in multi-cell mode.
  */
-export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20 } = {}) {
+export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, scanAllDatabases = true } = {}) {
   if (typeof priceFetcher !== 'function') return { resolved: 0, pending: 0 };
   const currentTime = now();
 
-  // Find pending captures where at least 5 minutes have elapsed since observed_at_ms
-  const pendingRows = db.prepare(`
-    SELECT * FROM signal_captures
-    WHERE capture_status = 'pending' AND observed_at_ms <= ?
-    ORDER BY observed_at_ms ASC LIMIT ?
-  `).all(currentTime - 300_000, maxBatch);
+  const targetDbs = [];
+  targetDbs.push({ name: 'current', dbHandle: db, shouldClose: false });
 
-  let resolvedCount = 0;
-
-  for (const row of pendingRows) {
-    try {
-      const price = await priceFetcher(row.mint);
-      if (price != null && Number.isFinite(Number(price))) {
-        const elapsed = currentTime - row.observed_at_ms;
-        const updates = {};
-        if (elapsed >= 300_000 && !row.forward_5m_price) updates.forward5mPrice = Number(price);
-        if (elapsed >= 900_000 && !row.forward_15m_price) updates.forward15mPrice = Number(price);
-        if (elapsed >= 3_600_000) {
-          updates.forward1hPrice = Number(price);
-          updates.captureStatus = 'complete';
+  if (scanAllDatabases) {
+    const dataDir = path.resolve('./data');
+    if (fs.existsSync(dataDir)) {
+      const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.sqlite'));
+      for (const f of files) {
+        try {
+          const fullPath = path.join(dataDir, f);
+          const cellDb = new Database(fullPath);
+          targetDbs.push({ name: f, dbHandle: cellDb, shouldClose: true });
+        } catch {
+          // ignore busy/locked
         }
-        updateForwardPriceMarks(row.id, updates);
-        resolvedCount++;
       }
-    } catch {
-      // Individual token fetch failure, retry on next cycle
     }
   }
 
-  return { resolved: resolvedCount, pending: pendingRows.length };
+  let totalResolved = 0;
+  let totalPending = 0;
+
+  for (const item of targetDbs) {
+    try {
+      // Check if table exists
+      const tableExists = item.dbHandle.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='signal_captures'").get();
+      if (!tableExists) continue;
+
+      const pendingRows = item.dbHandle.prepare(`
+        SELECT * FROM signal_captures
+        WHERE capture_status = 'pending' AND observed_at_ms <= ?
+        ORDER BY observed_at_ms ASC LIMIT ?
+      `).all(currentTime - 300_000, maxBatch);
+
+      totalPending += pendingRows.length;
+
+      for (const row of pendingRows) {
+        try {
+          const price = await priceFetcher(row.mint);
+          if (price != null && Number.isFinite(Number(price))) {
+            const elapsed = currentTime - row.observed_at_ms;
+            const forward5m = (elapsed >= 300_000 && !row.forward_5m_price) ? Number(price) : null;
+            const forward15m = (elapsed >= 900_000 && !row.forward_15m_price) ? Number(price) : null;
+            const forward1h = (elapsed >= 3_600_000) ? Number(price) : null;
+            const captureStatus = (elapsed >= 3_600_000) ? 'complete' : 'pending';
+
+            item.dbHandle.prepare(`
+              UPDATE signal_captures
+              SET forward_5m_price = COALESCE(?, forward_5m_price),
+                  forward_15m_price = COALESCE(?, forward_15m_price),
+                  forward_1h_price = COALESCE(?, forward_1h_price),
+                  capture_status = ?
+              WHERE id = ?
+            `).run(forward5m, forward15m, forward1h, captureStatus, row.id);
+
+            totalResolved++;
+          }
+        } catch {
+          // fetch error
+        }
+      }
+    } catch {
+      // table query error
+    } finally {
+      if (item.shouldClose) {
+        try { item.dbHandle.close(); } catch {}
+      }
+    }
+  }
+
+  return { resolved: totalResolved, pending: totalPending };
 }
 
 /**

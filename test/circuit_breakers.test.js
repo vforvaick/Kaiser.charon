@@ -79,4 +79,43 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
 
     resetCircuitBreaker('DAILY_LOSS_LIMIT');
   });
+
+  it('blocks entry when API gateway backoff is active', () => {
+    const res = canOpenPositionRiskCheck({ isApiBackoffActive: true });
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('API_GATEWAY_BACKOFF_ACTIVE'));
+  });
+
+  it('latches circuit breaker on emergency per-trade loss exceeding 0.005 SOL', () => {
+    const ts = Date.now();
+    db.prepare(`
+      INSERT INTO dry_run_positions (
+        candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0060, -24.0, '{}')
+    `).run(ts - 1000, ts);
+
+    const res = canOpenPositionRiskCheck();
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('EMERGENCY_PER_TRADE_LOSS'));
+
+    resetCircuitBreaker('EMERGENCY_PER_TRADE_LOSS');
+  });
+
+  it('latches circuit breaker on lifetime canary loss exceeding 0.15 SOL', () => {
+    // Position from 10 days ago (outside daily and 7-day rolling window)
+    const tenDaysAgoTs = Date.now() - 10 * 86400000;
+    db.prepare(`
+      INSERT INTO dry_run_positions (
+        candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.1600, -80.0, '{}')
+    `).run(tenDaysAgoTs - 1000, tenDaysAgoTs);
+
+    const res = canOpenPositionRiskCheck();
+    assert.equal(res.allowed, false);
+    assert.ok(res.reason.includes('CANARY_LIFETIME_LOSS_LIMIT'));
+
+    resetCircuitBreaker('CANARY_LIFETIME_LOSS_LIMIT');
+  });
 });

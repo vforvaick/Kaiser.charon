@@ -413,6 +413,20 @@ export function initDb() {
     llm_min_confidence: 0,
   }), ts);
 
+  // Idempotent migration for existing database instances: update degen max_mcap_usd to 80k if still at legacy 100k
+  try {
+    const degenRow = db.prepare("SELECT config_json FROM strategies WHERE id = 'degen'").get();
+    if (degenRow?.config_json) {
+      const cfg = JSON.parse(degenRow.config_json);
+      if (cfg.max_mcap_usd === 100000) {
+        cfg.max_mcap_usd = 80000;
+        db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'degen'").run(JSON.stringify(cfg));
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   stratInsert.run('obicle_degen', 'Obicle Degen (Trench)', 0, JSON.stringify({
     entry_mode: 'immediate',
     min_source_count: 1,

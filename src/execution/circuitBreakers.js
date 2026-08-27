@@ -1,12 +1,13 @@
 import { db } from '../db/connection.js';
 import { now } from '../utils.js';
 
-// Risk limits
+// Risk limits (SPEC-005 & Oracle recommendations)
 export const RISK_LIMITS = {
   MAX_DAILY_LOSS_SOL: 0.025,
   MAX_CONSECUTIVE_LOSSES: 3,
   MAX_ROLLING_7D_LOSS_SOL: 0.075,
   MAX_LIFETIME_CANARY_LOSS_SOL: 0.15,
+  MAX_EMERGENCY_PER_TRADE_LOSS_SOL: 0.005, // 20% on 0.025 SOL probe size
   MAX_SLIPPAGE_BPS: 500, // 5.0%
   MAX_QUOTE_AGE_MS: 30_000, // 30 seconds
 };
@@ -20,7 +21,7 @@ function safeJsonParse(val, fallback) {
 }
 
 /**
- * Check if any circuit breaker is currently latched.
+ * Check if any circuit breaker is currently latched (Fail-Closed).
  */
 export function getCircuitBreakerStatus(breakerType = null) {
   try {
@@ -49,8 +50,13 @@ export function getCircuitBreakerStatus(breakerType = null) {
       allBreakers: rows,
     };
   } catch (err) {
-    console.error(`[circuit-breaker] status lookup error: ${err.message}`);
-    return { isAnyLatched: false, latchedBreakers: [] };
+    console.error(`[circuit-breaker] status lookup error (fail-closed): ${err.message}`);
+    // Fail-Closed: deny on DB error
+    return {
+      isAnyLatched: true,
+      latchedBreakers: [{ breakerType: 'RISK_CHECK_UNAVAILABLE', tripReason: err.message, latchedAtMs: now() }],
+      allBreakers: [],
+    };
   }
 }
 
@@ -104,30 +110,37 @@ export function resetCircuitBreaker(breakerType) {
 
 /**
  * Mandatory pre-entry risk check evaluating loss accumulation and operational metrics.
+ * Strictly Fail-Closed: returns allowed: false on any DB failure or limit breach.
  */
 export function canOpenPositionRiskCheck({
-  strategyId = 'default',
+  _strategyId = 'default',
   quoteAgeMs = 0,
   slippageBps = 0,
+  isApiBackoffActive = false,
 } = {}) {
-  // 1. Check persistent latches
-  const status = getCircuitBreakerStatus();
-  if (status.isAnyLatched) {
-    const reasons = status.latchedBreakers.map(b => `${b.breakerType}: ${b.tripReason}`).join('; ');
-    return { allowed: false, reason: `CIRCUIT_BREAKER_LATCHED (${reasons})` };
-  }
-
-  // 2. Operational checks
-  if (quoteAgeMs > RISK_LIMITS.MAX_QUOTE_AGE_MS) {
-    return { allowed: false, reason: `STALE_QUOTE (${quoteAgeMs}ms > ${RISK_LIMITS.MAX_QUOTE_AGE_MS}ms)` };
-  }
-  if (slippageBps > RISK_LIMITS.MAX_SLIPPAGE_BPS) {
-    return { allowed: false, reason: `EXCESSIVE_SLIPPAGE (${slippageBps}bps > ${RISK_LIMITS.MAX_SLIPPAGE_BPS}bps)` };
-  }
-
-  // 3. Daily realized loss check (since UTC midnight)
-  const todayStartMs = new Date().setUTCHours(0, 0, 0, 0);
   try {
+    // 1. Check persistent latches
+    const status = getCircuitBreakerStatus();
+    if (status.isAnyLatched) {
+      const reasons = status.latchedBreakers.map(b => `${b.breakerType}: ${b.tripReason}`).join('; ');
+      return { allowed: false, reason: `CIRCUIT_BREAKER_LATCHED (${reasons})` };
+    }
+
+    // 2. Operational checks
+    if (isApiBackoffActive) {
+      return { allowed: false, reason: 'API_GATEWAY_BACKOFF_ACTIVE' };
+    }
+    if (quoteAgeMs > RISK_LIMITS.MAX_QUOTE_AGE_MS) {
+      return { allowed: false, reason: `STALE_QUOTE (${quoteAgeMs}ms > ${RISK_LIMITS.MAX_QUOTE_AGE_MS}ms)` };
+    }
+    if (slippageBps > RISK_LIMITS.MAX_SLIPPAGE_BPS) {
+      return { allowed: false, reason: `EXCESSIVE_SLIPPAGE (${slippageBps}bps > ${RISK_LIMITS.MAX_SLIPPAGE_BPS}bps)` };
+    }
+
+    const currentTime = now();
+
+    // 3. Daily realized loss check (since UTC midnight)
+    const todayStartMs = new Date().setUTCHours(0, 0, 0, 0);
     const dailyTrades = db.prepare(`
       SELECT pnl_sol FROM dry_run_positions
       WHERE status = 'closed' AND closed_at_ms >= ?
@@ -158,7 +171,24 @@ export function canOpenPositionRiskCheck({
       }
     }
 
-    // 5. Lifetime canary loss check
+    // 5. Rolling 7-day loss check
+    const sevenDaysAgoMs = currentTime - 7 * 86_400_000;
+    const rolling7dTrades = db.prepare(`
+      SELECT pnl_sol FROM dry_run_positions
+      WHERE status = 'closed' AND closed_at_ms >= ?
+    `).all(sevenDaysAgoMs);
+
+    const rolling7dLossSol = rolling7dTrades
+      .map(t => Number(t.pnl_sol) || 0)
+      .filter(p => p < 0)
+      .reduce((sum, p) => sum + Math.abs(p), 0);
+
+    if (rolling7dLossSol >= RISK_LIMITS.MAX_ROLLING_7D_LOSS_SOL) {
+      tripCircuitBreaker('ROLLING_7D_LOSS_LIMIT', `Rolling 7d loss ${rolling7dLossSol.toFixed(4)} SOL >= ${RISK_LIMITS.MAX_ROLLING_7D_LOSS_SOL} SOL`, { rolling7dLossSol });
+      return { allowed: false, reason: `ROLLING_7D_LOSS_LIMIT_REACHED (${rolling7dLossSol.toFixed(4)} SOL)` };
+    }
+
+    // 6. Lifetime canary cumulative loss check
     const lifetimeLossRow = db.prepare(`
       SELECT SUM(pnl_sol) as total_pnl FROM dry_run_positions
       WHERE status = 'closed'
@@ -169,9 +199,20 @@ export function canOpenPositionRiskCheck({
       tripCircuitBreaker('CANARY_LIFETIME_LOSS_LIMIT', `Cumulative loss ${Math.abs(totalPnl).toFixed(4)} SOL >= ${RISK_LIMITS.MAX_LIFETIME_CANARY_LOSS_SOL} SOL`, { totalPnl });
       return { allowed: false, reason: `CANARY_LIFETIME_LOSS_LIMIT_REACHED (${Math.abs(totalPnl).toFixed(4)} SOL)` };
     }
-  } catch (err) {
-    console.error(`[circuit-breaker] query error: ${err.message}`);
-  }
 
-  return { allowed: true };
+    // 7. Emergency single-position loss cap check on last closed trade
+    const lastTrade = recentTrades[0];
+    if (lastTrade) {
+      const lastPnl = Number(lastTrade.pnl_sol) || 0;
+      if (lastPnl <= -RISK_LIMITS.MAX_EMERGENCY_PER_TRADE_LOSS_SOL) {
+        tripCircuitBreaker('EMERGENCY_PER_TRADE_LOSS', `Single trade loss ${Math.abs(lastPnl).toFixed(4)} SOL >= ${RISK_LIMITS.MAX_EMERGENCY_PER_TRADE_LOSS_SOL} SOL`, { lastPnl });
+        return { allowed: false, reason: `EMERGENCY_PER_TRADE_LOSS (${Math.abs(lastPnl).toFixed(4)} SOL)` };
+      }
+    }
+
+    return { allowed: true };
+  } catch (err) {
+    console.error(`[circuit-breaker] query error (fail-closed): ${err.message}`);
+    return { allowed: false, reason: `RISK_CHECK_UNAVAILABLE (${err.message})` };
+  }
 }

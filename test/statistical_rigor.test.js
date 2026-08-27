@@ -157,21 +157,29 @@ describe('Ticket 04: 4-Stage Promotion Scorecard', () => {
     assert.ok(scorecard.checks.every(c => c.passed));
   });
 
-  it('fails Stage 1 when bootstrap LCB is non-positive or daily consistency < 70%', () => {
-    const trades = Array.from({ length: 60 }, (_, i) => ({
-      opened_at_ms: 1700000000000 + i * 86400000,
-      netPnl: i % 2 === 0 ? -0.005 : 0.010, // 50% positive days
-    }));
+  it('fails Stage 1 when second chronological half is negative (multi-window instability)', () => {
+    const trades = [
+      // First half (positive +0.20)
+      ...Array.from({ length: 30 }, (_, i) => ({
+        opened_at_ms: 1700000000000 + i * 86400000,
+        netPnl: 0.010,
+      })),
+      // Second half (negative -0.15)
+      ...Array.from({ length: 30 }, (_, i) => ({
+        opened_at_ms: 1700000000000 + (30 + i) * 86400000,
+        netPnl: -0.005,
+      })),
+    ];
 
     const portfolioSummary = {
       executedTradesCount: 60,
-      netRealizedPnlSol: 0.15,
-      profitFactor: 2.0,
+      netRealizedPnlSol: 0.05,
+      profitFactor: 1.33,
     };
 
     const bootstrapStats = {
       status: 'COMPLETE',
-      lcb95Sol: -0.001, // Negative LCB
+      lcb95Sol: 0.001,
     };
 
     const scorecard = evaluatePromotionScorecard({
@@ -183,5 +191,8 @@ describe('Ticket 04: 4-Stage Promotion Scorecard', () => {
     });
 
     assert.equal(scorecard.stage1Verdict, 'STAGE_1_FAIL');
+    const windowCheck = scorecard.checks.find(c => c.name === 'Two Non-Overlapping Windows Stability');
+    assert.ok(windowCheck);
+    assert.equal(windowCheck.passed, false);
   });
 });

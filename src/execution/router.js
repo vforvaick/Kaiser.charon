@@ -14,6 +14,7 @@ import { candidateSummary } from '../telegram/format.js';
 import { sendPositionOpen, sendTelegram } from '../telegram/send.js';
 import { updateCandidateStatus } from '../db/candidates.js';
 import { createTradeIntent } from '../db/intents.js';
+import { canOpenPositionRiskCheck } from './circuitBreakers.js';
 
 const ENTRY_MAX_ATTEMPTS = 3;
 
@@ -30,14 +31,22 @@ function withEntryLock(fn) {
 
 export async function executeLiveBuy(selectedRow, decision, batchId, rows = [], triggerCandidateId = null) {
   return withEntryLock(async () => {
-    // Pre-swap guard: never spend SOL if dedup or max-positions would reject the entry.
+    // 1. Mandatory Risk Circuit Breaker Pre-Swap Gate (Ticket 01 SPEC-005)
+    const strat = activeStrategy();
+    const riskCheck = canOpenPositionRiskCheck({ strategyId: strat?.id });
+    if (!riskCheck.allowed) {
+      const msg = `Entry blocked by risk circuit breaker: ${riskCheck.reason}`;
+      console.warn(`[executeLiveBuy] ${msg}`);
+      throw new Error(msg);
+    }
+
+    // 2. Pre-swap guard: never spend SOL if dedup or max-positions would reject the entry.
     const guard = checkEntryGuards(selectedRow.candidate.token.mint);
     if (!guard.allowed) {
       const msg = `Entry blocked pre-swap: ${guard.reason}${guard.blockedById ? ` (#${guard.blockedById})` : ''}`;
       console.log(`[executeLiveBuy] ${msg}`);
       throw new Error(msg);
     }
-    const strat = activeStrategy();
     const amountLamports = Math.floor((strat.position_size_sol ?? numSetting('dry_run_buy_sol', 0.1)) * 1_000_000_000);
     const balance = await liveWalletBalanceLamports();
     if (balance < amountLamports + LIVE_MIN_SOL_RESERVE_LAMPORTS) {
@@ -166,11 +175,16 @@ export async function executeConfirmedIntent(chatId, intentId) {
     // createLivePosition MUST stay inside the lock: releasing after swap-but-before insert
     // would let a concurrent entry pass checkEntryGuards and duplicate-swap.
     const result = await withEntryLock(async () => {
+      const strat = activeStrategy();
+      const riskCheck = canOpenPositionRiskCheck({ strategyId: strat?.id });
+      if (!riskCheck.allowed) {
+        throw new Error(`Entry blocked by risk circuit breaker: ${riskCheck.reason}`);
+      }
+
       const guard = checkEntryGuards(freshRow.candidate.token.mint);
       if (!guard.allowed) {
         throw new Error(`Entry blocked pre-swap: ${guard.reason}${guard.blockedById ? ` (#${guard.blockedById})` : ''}`);
       }
-      const strat = activeStrategy();
       const amt = Math.floor((strat.position_size_sol ?? numSetting('dry_run_buy_sol', 0.1)) * 1_000_000_000);
       const bal = await liveWalletBalanceLamports();
       if (bal < amt + LIVE_MIN_SOL_RESERVE_LAMPORTS) {
