@@ -72,4 +72,12 @@ describe('CLI Script Audits: Counterfactual & Promotion Scorecard', () => {
     assert.ok(reportText.includes('Dataset SHA-256 Fingerprint'));
     assert.ok(reportText.includes('STAGE_1_PASS'));
   });
+
+  it('runs promotion audit with missing database path cleanly without throwing unhandled exception', () => {
+    const res = runPromotionAudit('./data/non_existent_file_xyz.sqlite');
+    assert.equal(res.status, 'ERROR');
+    assert.ok(res.error.includes('Database not found'));
+    const reportText = formatPromotionReport(res);
+    assert.ok(reportText.includes('ERROR'));
+  });
 });

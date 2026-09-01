@@ -45,7 +45,7 @@ export function collectCellMetrics(cell) {
     const maxWinSol = Number(stats?.max_win_sol || 0);
     const winRate = closed > 0 ? (wins / closed) * 100 : 0;
     const navSol = 1.0 + realizedPnlSol;
-    const isOutlierDominated = realizedPnlSol > 0.1 && (maxWinSol / realizedPnlSol) > 0.5;
+    const isOutlierDominated = realizedPnlSol > 0 && (maxWinSol / realizedPnlSol) > 0.5;
     db.close();
 
     return {
