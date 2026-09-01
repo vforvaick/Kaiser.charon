@@ -39,11 +39,13 @@ export function collectCellMetrics(cell) {
     const open = db.prepare("SELECT COUNT(*) AS count FROM dry_run_positions WHERE status = 'open'").get()?.count || 0;
     const closed = db.prepare("SELECT COUNT(*) AS count FROM dry_run_positions WHERE status = 'closed'").get()?.count || 0;
     const wins = db.prepare("SELECT COUNT(*) AS count FROM dry_run_positions WHERE status = 'closed' AND pnl_sol > 0").get()?.count || 0;
-    const stats = db.prepare("SELECT SUM(pnl_sol) AS total_sol, AVG(pnl_percent) AS avg_pct FROM dry_run_positions WHERE status = 'closed'").get();
+    const stats = db.prepare("SELECT SUM(pnl_sol) AS total_sol, AVG(pnl_percent) AS avg_pct, MAX(pnl_sol) AS max_win_sol FROM dry_run_positions WHERE status = 'closed'").get();
     const realizedPnlSol = Number(stats?.total_sol || 0);
     const avgPnlPct = Number(stats?.avg_pct || 0);
+    const maxWinSol = Number(stats?.max_win_sol || 0);
     const winRate = closed > 0 ? (wins / closed) * 100 : 0;
     const navSol = 1.0 + realizedPnlSol;
+    const isOutlierDominated = realizedPnlSol > 0.1 && (maxWinSol / realizedPnlSol) > 0.5;
     db.close();
 
     return {
@@ -58,6 +60,8 @@ export function collectCellMetrics(cell) {
       realizedPnlSol,
       avgPnlPct,
       navSol,
+      maxWinSol,
+      isOutlierDominated,
     };
   } catch (err) {
     return { ...cell, dbPath, exists: false, error: err.message, candidates: 0, open: 0, closed: 0, wins: 0, winRate: 0, realizedPnlSol: 0, avgPnlPct: 0, navSol: 1.0 };
@@ -73,9 +77,10 @@ export function generateMatrixReport(metricsList) {
     }
     const sign = m.realizedPnlSol >= 0 ? '+' : '';
     const openNote = m.open > 0 ? ` (Excludes ${m.open} open)` : '';
+    const outlierNote = m.isOutlierDominated ? ` ⚠️ <i>(Outlier: 1 win = +${m.maxWinSol.toFixed(2)} SOL)</i>` : '';
     lines.push([
       `• <b>${m.id}</b> (${m.useLlm ? 'LLM' : 'Rules'})`,
-      `  Realized NAV: ${m.navSol.toFixed(3)} SOL (${sign}${m.realizedPnlSol.toFixed(4)} SOL)${openNote}`,
+      `  Realized NAV: ${m.navSol.toFixed(3)} SOL (${sign}${m.realizedPnlSol.toFixed(4)} SOL)${openNote}${outlierNote}`,
       `  Closed: ${m.closed} · Win Rate: ${m.winRate.toFixed(1)}% · Wins: ${m.wins}`,
       `  Candidates: ${m.candidates} · Open: ${m.open} · Avg Trade: ${m.avgPnlPct.toFixed(1)}%`,
     ].join('\n'));

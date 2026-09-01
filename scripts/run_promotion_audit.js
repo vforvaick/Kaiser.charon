@@ -140,12 +140,29 @@ export function formatPromotionReport(result) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = process.argv.slice(2);
   let dbArg = './data/degen_rules.sqlite';
+  let compareAll = false;
+
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--db' && args[i + 1]) {
       dbArg = args[i + 1];
+    } else if (args[i] === '--all' || args[i] === '--compare-all') {
+      compareAll = true;
     }
   }
 
-  const res = runPromotionAudit(dbArg);
-  console.log(formatPromotionReport(res));
+  if (compareAll) {
+    const dataDir = path.resolve(ROOT_DIR, 'data');
+    if (fs.existsSync(dataDir)) {
+      const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.sqlite'));
+      files.sort().forEach(f => {
+        const fullPath = path.join(dataDir, f);
+        const res = runPromotionAudit(fullPath);
+        console.log(formatPromotionReport(res));
+        console.log('\n');
+      });
+    }
+  } else {
+    const res = runPromotionAudit(dbArg);
+    console.log(formatPromotionReport(res));
+  }
 }
