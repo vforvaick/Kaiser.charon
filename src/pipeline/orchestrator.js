@@ -3,12 +3,12 @@ import { numSetting, boolSetting } from '../db/settings.js';
 import { db } from '../db/connection.js';
 import { upsertCandidate, updateCandidateStatus, recentEligibleCandidates, candidateById } from '../db/candidates.js';
 import { storeDecision, storeBatchDecision, logDecisionEvent, checkDecisionCache } from '../db/decisions.js';
-import { buildCandidate, filterCandidate, signalLabel } from './candidateBuilder.js';
+import { buildCandidate, filterCandidate } from './candidateBuilder.js';
 import { preScoreCandidate } from './preScorer.js';
 import { momentumFilter } from './momentumFilter.js';
 import { decideCandidateBatch } from './llm.js';
 import { activeStrategy } from '../db/settings.js';
-import { createDryRunPosition, createLivePosition, canOpenMorePositions, openPositionCount, tradingMode } from '../db/positions.js';
+import { createDryRunPosition, canOpenMorePositions, openPositionCount, tradingMode } from '../db/positions.js';
 import { sendBatchReveal, sendTelegram, sendPositionOpen, sendTradeIntent } from '../telegram/send.js';
 import { candidateSummary } from '../telegram/format.js';
 import { createTradeIntent } from '../db/intents.js';
@@ -18,6 +18,7 @@ import { graduated } from '../signals/graduated.js';
 import { setDegenHandler } from '../signals/trending.js';
 import { setCandidateHandler } from '../signals/feeClaim.js';
 import { canOpenPositionRiskCheck } from '../execution/circuitBreakers.js';
+import { isJupiterApiBackoffActive } from '../enrichment/jupiter.js';
 import { short } from '../format.js';
 import { escapeHtml } from '../format.js';
 import { recordSignalObservation, updateSignalDecision } from '../telemetry/forwardCapture.js';
@@ -40,7 +41,7 @@ export async function processCandidateFromSignals(signals) {
       observedAtMs: Date.now(),
       metadata: { route: signals?.route, initialPrice: signals?.price },
     });
-  } catch {
+  } catch (err) {
     // Non-blocking telemetry
     console.error(`[telemetry] recordSignalObservation error: ${err.message}`);
   }
@@ -171,7 +172,7 @@ export async function processCandidateFromSignals(signals) {
       entryPriceUsd: candidate.metrics?.priceUsd || null,
       entryMcapUsd: candidate.metrics?.marketCapUsd || null,
     });
-  } catch {
+  } catch (err) {
     // Non-blocking telemetry
     console.error(`[telemetry] updateSignalDecision error: ${err.message}`);
   }
@@ -260,7 +261,7 @@ export async function processCandidateFromSignals(signals) {
     }
     try {
       await handleApprovedBuy(selectedRow, batchDecision, batchId, rows, candidateId);
-    } catch {
+    } catch (err) {
       console.error(`[orchestrator] handleApprovedBuy failed for ${selectedRow.candidate.token.mint}: ${err.message}`);
       logDecisionEvent({
         batchId,
@@ -299,6 +300,7 @@ export async function processCandidateFromSignals(signals) {
 
 export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [], triggerCandidateId = null) {
   const mode = tradingMode();
+  const strat = activeStrategy();
   // Fire-and-forget refresh — start now, await later. Wrapped so a refresh failure
   // doesn't kill the trade — we just fall back to the unrefreshed row.
   const refreshPromise = refreshCandidateForExecution(selectedRow).catch(err => {
@@ -333,6 +335,35 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
   }
 
   if (mode === 'dry_run') {
+    // Operational risk checks for dry-run (stale quote >30s, slippage >500bps, API backoff)
+    const quoteTime = freshSelectedRow.candidate?.executionRefresh?.refreshedAtMs
+      ?? freshSelectedRow.candidate?.createdAtMs
+      ?? freshSelectedRow.created_at_ms
+      ?? now();
+    const quoteAgeMs = Math.max(0, now() - quoteTime);
+    const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS || numSetting('jupiter_slippage_bps', 100));
+    const opCheck = canOpenPositionRiskCheck({
+      _strategyId: strat?.id,
+      quoteAgeMs,
+      slippageBps,
+      isApiBackoffActive: isJupiterApiBackoffActive(),
+      isLiveMode: false,
+    });
+    if (!opCheck.allowed) {
+      console.warn(`[risk] dry-run entry blocked: ${opCheck.reason}`);
+      logDecisionEvent({
+        batchId,
+        triggerCandidateId,
+        selectedRow: freshSelectedRow,
+        rows: executionRows,
+        decision,
+        mode,
+        action: 'dry_run_blocked_operational_risk',
+        guardrails: { reason: opCheck.reason },
+      });
+      return;
+    }
+
     // FIX #3: Wrap position creation in try-catch to capture execution failures
     let positionId, isNew, pastWinPnlSol, pastWinClosedAtMs;
     try {
@@ -341,7 +372,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
       isNew = result.isNew;
       pastWinPnlSol = result.pastWinPnlSol;
       pastWinClosedAtMs = result.pastWinClosedAtMs;
-    } catch {
+    } catch (err) {
       console.error(`[orchestrator] createDryRunPosition failed for ${freshSelectedRow.candidate.token.mint}: ${err.message}`);
       logDecisionEvent({
         batchId,
@@ -440,7 +471,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
 
   try {
     await executeLiveBuy(freshSelectedRow, decision, batchId, executionRows, triggerCandidateId);
-  } catch {
+  } catch (err) {
     const intentId = createTradeIntent(freshSelectedRow.id, freshSelectedRow.candidate, decision, mode, 'execution_failed');
     logDecisionEvent({
       batchId,

@@ -54,19 +54,21 @@ export function runPromotionAudit(dbPath) {
     });
     const portfolioSummary = sim.run(trades);
 
-    // 2. Clustered Bootstrap
-    const bootstrapStats = computeClusteredBootstrap(trades, { iterations: 1000, minDailyBlocks: 5 });
+    const executedTrades = portfolioSummary.executedTrades || trades;
 
-    // 3. CVaR 95%
-    const cvarStats = computeCvar95(trades, 5);
+    // 2. Clustered Bootstrap on modeled executed trades (incorporates capacity limits & single fee deduction)
+    const bootstrapStats = computeClusteredBootstrap(executedTrades, { iterations: 1000, minDailyBlocks: 5 });
+
+    // 3. CVaR 95% on modeled executed trades
+    const cvarStats = computeCvar95(executedTrades, 5);
 
     // 4. Dataset Fingerprint
-    const fingerprint = generateDatasetFingerprint(trades);
+    const fingerprint = generateDatasetFingerprint(executedTrades);
 
     // 5. Scorecard
     const scorecard = evaluatePromotionScorecard({
       strategyId: stratRow?.id || path.basename(resolvedPath, '.sqlite'),
-      trades,
+      trades: executedTrades,
       portfolioSummary,
       bootstrapStats,
       cvarStats,

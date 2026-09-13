@@ -200,9 +200,14 @@ export async function resolvePendingForwardMarks(priceFetcher, { maxBatch = 20, 
       const fetchLimit = Math.min(20, remainingBudget);
       const pendingRows = item.dbHandle.prepare(`
         SELECT * FROM signal_captures
-        WHERE capture_status = 'pending' AND observed_at_ms <= ?
+        WHERE capture_status = 'pending'
+          AND (
+            (observed_at_ms <= ? AND forward_5m_price IS NULL)
+            OR (observed_at_ms <= ? AND forward_15m_price IS NULL)
+            OR (observed_at_ms <= ? AND forward_1h_price IS NULL)
+          )
         ORDER BY observed_at_ms ASC LIMIT ?
-      `).all(currentTime - 300_000, fetchLimit);
+      `).all(currentTime - 300_000, currentTime - 900_000, currentTime - 3_600_000, fetchLimit);
 
       totalPending += pendingRows.length;
 

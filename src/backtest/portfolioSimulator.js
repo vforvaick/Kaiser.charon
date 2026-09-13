@@ -219,6 +219,8 @@ export class PortfolioSimulator {
       maxDrawdownPct: this.maxDrawdownPct,
       maxDrawdownDurationMs: this.maxDrawdownDurationMs,
       equityCurve: this.equityCurve,
+      executedTrades: this.executedTrades,
+      capacitySkippedTrades: this.capacitySkippedTrades,
     };
   }
 }

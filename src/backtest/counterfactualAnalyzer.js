@@ -7,7 +7,6 @@
 
 export function analyzeCounterfactualOutcomes(captures = [], {
   runnerGainPct = 25.0,  // threshold to classify a token as a runner (+25%)
-  rugLossPct = -40.0,    // threshold to classify a token as a rug (-40%)
   evaluationHorizon = 'forward_1h_price', // horizon to evaluate
 } = {}) {
   if (!captures.length) {
@@ -18,8 +17,8 @@ export function analyzeCounterfactualOutcomes(captures = [], {
   let incompleteCount = 0;
 
   let tp = 0; // Filter passed & was Runner
-  let fp = 0; // Filter passed & was Rug/Loss
-  let tn = 0; // Filter rejected & was Rug/Loss
+  let fp = 0; // Filter passed & was Non-Runner
+  let tn = 0; // Filter rejected & was Non-Runner
   let fn = 0; // Filter rejected & was Runner (Alpha Leakage)
 
   let totalMissedGainPct = 0;

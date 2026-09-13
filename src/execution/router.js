@@ -1,7 +1,7 @@
 import { now, json } from '../utils.js';
 import { numSetting, boolSetting } from '../db/settings.js';
 import { db } from '../db/connection.js';
-import { WSOL_MINT, LIVE_MIN_SOL_RESERVE_LAMPORTS } from '../config.js';
+import { WSOL_MINT, LIVE_MIN_SOL_RESERVE_LAMPORTS, JUPITER_SLIPPAGE_BPS } from '../config.js';
 import { escapeHtml, fmtSol } from '../format.js';
 import { executeJupiterSwap, liveWalletBalanceLamports, fetchLiveTokenBalance } from '../liveExecutor.js';
 import { activeStrategy } from '../db/settings.js';
@@ -39,7 +39,7 @@ export async function executeLiveBuy(selectedRow, decision, batchId, rows = [], 
       ?? selectedRow.created_at_ms
       ?? now();
     const quoteAgeMs = Math.max(0, now() - quoteTime);
-    const slippageBps = numSetting('jupiter_slippage_bps', 100);
+    const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS || JUPITER_SLIPPAGE_BPS || numSetting('jupiter_slippage_bps', 300));
 
     const riskCheck = canOpenPositionRiskCheck({
       _strategyId: strat?.id,
@@ -194,7 +194,7 @@ export async function executeConfirmedIntent(chatId, intentId) {
         ?? freshRow.created_at_ms
         ?? now();
       const quoteAgeMs = Math.max(0, now() - quoteTime);
-      const slippageBps = numSetting('jupiter_slippage_bps', 100);
+      const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS || JUPITER_SLIPPAGE_BPS || numSetting('jupiter_slippage_bps', 300));
 
       const riskCheck = canOpenPositionRiskCheck({
         _strategyId: strat?.id,

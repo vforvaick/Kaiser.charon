@@ -80,4 +80,28 @@ describe('CLI Script Audits: Counterfactual & Promotion Scorecard', () => {
     const reportText = formatPromotionReport(res);
     assert.ok(reportText.includes('ERROR'));
   });
+
+  it('evaluates promotion scorecard strictly on capacity-modeled executed trades excluding skipped overflow', () => {
+    db.prepare('DELETE FROM dry_run_positions').run();
+    const ts = Date.now() - 86400000;
+
+    // Insert 10 simultaneous overlapping trades for strategy with max_slots: 3
+    for (let i = 1; i <= 10; i++) {
+      // Trades 1-3 have normal small return; trades 4-10 have massive phantom gains that should be skipped
+      const pnl = i <= 3 ? 0.010 : 0.500;
+      db.prepare(`
+        INSERT INTO dry_run_positions (
+          candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+          trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
+        ) VALUES (1, ?, 'closed', ?, ?, 0.05, 30, -15, 1, 10, ?, 20.0, '{}')
+      `).run(`overflow_mint_${i}`, ts + 1000, ts + 50000, pnl);
+    }
+
+    const res = runPromotionAudit(process.env.DB_PATH);
+    assert.equal(res.status, 'COMPLETE');
+    // In sniper/default config max slots is 3, so only 3 should be executed, 7 skipped
+    assert.equal(res.portfolioSummary.capacitySkippedCount, 7);
+    assert.equal(res.portfolioSummary.executedTradesCount, 3);
+    assert.equal(res.scorecard.summary.totalTrades, 3, 'Scorecard must evaluate strictly on executed trades');
+  });
 });

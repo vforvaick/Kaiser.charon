@@ -231,4 +231,67 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
 
     resetCircuitBreaker('DAILY_LOSS_LIMIT');
   });
+
+  it('blocks executeLiveBuy directly at router level when slippage exceeds threshold', async () => {
+    const { executeLiveBuy } = await import('../src/execution/router.js');
+    const validCandidateRow = {
+      id: 998,
+      created_at_ms: Date.now(),
+      candidate: {
+        token: { mint: 'slippageMint11111111111111111111111', symbol: 'SLIP' },
+        createdAtMs: Date.now(),
+        filters: { passed: true },
+      },
+    };
+
+    const oldSlippage = process.env.JUPITER_SLIPPAGE_BPS;
+    try {
+      process.env.JUPITER_SLIPPAGE_BPS = '600'; // 600 bps > 500 bps limit
+      await assert.rejects(
+        async () => {
+          await executeLiveBuy(validCandidateRow, { verdict: 'BUY', confidence: 90 }, 1);
+        },
+        (err) => {
+          assert.ok(err.message.includes('EXCESSIVE_SLIPPAGE'));
+          return true;
+        }
+      );
+    } finally {
+      if (oldSlippage !== undefined) process.env.JUPITER_SLIPPAGE_BPS = oldSlippage;
+      else delete process.env.JUPITER_SLIPPAGE_BPS;
+    }
+  });
+
+  it('orchestrator handleApprovedBuy catches and records errors without ReferenceError', async () => {
+    const { handleApprovedBuy } = await import('../src/pipeline/orchestrator.js');
+    const failingRow = {
+      id: 997,
+      candidate: {
+        token: { mint: 'failMint1111111111111111111111111111', symbol: 'FAIL', name: 'Fail' },
+        createdAtMs: Date.now(),
+        metrics: { marketCapUsd: 50000, priceUsd: 0.001, liquidityUsd: 10000, gmgnTotalFeesSol: 0, graduatedVolumeUsd: 0, holderCount: 50 },
+        holders: { top20Percent: 20, maxHolderPercent: 5 },
+        savedWalletExposure: { holderCount: 0, checked: 0 },
+        signals: { route: 'trending', label: 'trending' },
+        filters: { passed: true, failures: [] },
+      },
+    };
+
+    // Force failure in dry-run by making DB query throw
+    const originalPrepare = db.prepare;
+    try {
+      db.prepare = (sql) => {
+        if (sql.includes('INSERT INTO dry_run_positions')) {
+          throw new Error('Simulated insert error');
+        }
+        return originalPrepare.call(db, sql);
+      };
+
+      // Should handle gracefully without throwing ReferenceError: err is not defined
+      await handleApprovedBuy(failingRow, { verdict: 'BUY', confidence: 90 }, 1, [failingRow]);
+      assert.ok(true, 'handleApprovedBuy caught and handled error safely');
+    } finally {
+      db.prepare = originalPrepare;
+    }
+  });
 });

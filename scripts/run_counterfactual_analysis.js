@@ -16,7 +16,6 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 
 export function runCounterfactualAudit(dbPath, {
   runnerGainPct = 25.0,
-  rugLossPct = -40.0,
   evaluationHorizon = 'forward_1h_price',
 } = {}) {
   const targetPath = dbPath || process.env.DB_PATH || './charon.sqlite';
@@ -46,7 +45,6 @@ export function runCounterfactualAudit(dbPath, {
 
     const analysis = analyzeCounterfactualOutcomes(captures, {
       runnerGainPct,
-      rugLossPct,
       evaluationHorizon,
     });
 

@@ -41,7 +41,7 @@ module.exports = {
         ACTIVE_STRATEGY_ID: 'sniper',
         FORCE_USE_LLM: 'false',
         DISABLE_TELEGRAM_POLLING: 'true',
-        ENABLE_FORWARD_RESOLVER: 'true',
+        ENABLE_FORWARD_RESOLVER: 'false', // Resolver runs exclusively on primary matrix worker (charon-sniper-rules)
       },
     },
   ],

@@ -25,6 +25,8 @@ import { createDryRunPosition, canOpenMorePositions, openPositionCount, tradingM
 import { executeLiveBuy, executeConfirmedIntent, rejectIntent } from '../execution/router.js';
 import { sendCandidate, sendPosition, closePosition, updatePositionRule, toggleTrailing } from './commands.js';
 import { requestNumericFilterInput, requestStrategyNumericInput } from './input.js';
+import { canOpenPositionRiskCheck } from '../execution/circuitBreakers.js';
+import { isJupiterApiBackoffActive } from '../enrichment/jupiter.js';
 
 export async function handleCallback(query) {
   const data = query.data || '';
@@ -104,6 +106,21 @@ export async function handleCallback(query) {
     if (tradingMode() === 'live') {
       await executeLiveBuy(row, decision, 'manual', [row], row.id);
       return;
+    }
+    const quoteTime = candidate?.executionRefresh?.refreshedAtMs
+      ?? candidate?.createdAtMs
+      ?? row.created_at_ms
+      ?? now();
+    const quoteAgeMs = Math.max(0, now() - quoteTime);
+    const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS || numSetting('jupiter_slippage_bps', 100));
+    const opCheck = canOpenPositionRiskCheck({
+      quoteAgeMs,
+      slippageBps,
+      isApiBackoffActive: isJupiterApiBackoffActive(),
+      isLiveMode: false,
+    });
+    if (!opCheck.allowed) {
+      return bot.sendMessage(chatId, `Dry-run entry blocked by operational risk gate: ${opCheck.reason}`);
     }
     const positionId = await createDryRunPosition(row.id, candidate, decision, 'manual_buy');
     logDecisionEvent({

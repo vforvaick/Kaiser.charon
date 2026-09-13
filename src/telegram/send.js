@@ -12,12 +12,18 @@ import { generateExitCard } from '../visuals/exitCard.js';
 import { writeFileSync, unlinkSync } from 'fs';
 
 export async function sendTelegram(text, extra = {}) {
-  return bot.sendMessage(TELEGRAM_CHAT_ID, text, {
-    parse_mode: 'HTML',
-    disable_web_page_preview: true,
-    ...(TELEGRAM_TOPIC_ID ? { message_thread_id: Number(TELEGRAM_TOPIC_ID) } : {}),
-    ...extra,
-  });
+  if (!TELEGRAM_CHAT_ID || !bot) return null;
+  try {
+    return await bot.sendMessage(TELEGRAM_CHAT_ID, text, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      ...(TELEGRAM_TOPIC_ID ? { message_thread_id: Number(TELEGRAM_TOPIC_ID) } : {}),
+      ...extra,
+    });
+  } catch (err) {
+    console.error(`[telegram] sendTelegram error: ${err.message}`);
+    return null;
+  }
 }
 
 export async function sendCandidateAlert(candidateId, candidate, decision) {
