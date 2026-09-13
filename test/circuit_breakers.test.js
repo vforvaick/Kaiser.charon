@@ -177,4 +177,20 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
       }
     );
   });
+
+  it('allows dry-run entries without capital loss limits blocking paper trading', () => {
+    // Latch a real-money breaker
+    tripCircuitBreaker('DAILY_LOSS_LIMIT', 'Real money daily loss tripped');
+
+    // Live mode should be blocked
+    const liveCheck = canOpenPositionRiskCheck({ isLiveMode: true });
+    assert.equal(liveCheck.allowed, false);
+    assert.ok(liveCheck.reason.includes('DAILY_LOSS_LIMIT'));
+
+    // Dry-run simulation mode should NOT be blocked by capital loss latches
+    const dryRunCheck = canOpenPositionRiskCheck({ isLiveMode: false });
+    assert.equal(dryRunCheck.allowed, true);
+
+    resetCircuitBreaker('DAILY_LOSS_LIMIT');
+  });
 });

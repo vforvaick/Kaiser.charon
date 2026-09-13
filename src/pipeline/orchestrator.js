@@ -243,7 +243,8 @@ export async function processCandidateFromSignals(signals) {
   // #6: Buy the LLM's selected candidate regardless of which candidate triggered the batch
   if (selectedRow && boolSetting('agent_enabled', true) && batchDecision.verdict === 'BUY' && batchDecision.confidence >= numSetting('llm_min_confidence')) {
     // Check risk circuit breakers before executing entry (Ticket 01 SPEC-005)
-    const riskCheck = canOpenPositionRiskCheck({ strategyId: strat?.id });
+    const isLive = tradingMode() === 'live';
+    const riskCheck = canOpenPositionRiskCheck({ _strategyId: strat?.id, isLiveMode: isLive });
     if (!riskCheck.allowed) {
       console.warn(`[risk] entry blocked for ${selectedRow.candidate.token.mint}: ${riskCheck.reason}`);
       logDecisionEvent({

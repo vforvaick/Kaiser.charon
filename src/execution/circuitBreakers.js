@@ -117,16 +117,24 @@ export function canOpenPositionRiskCheck({
   quoteAgeMs = 0,
   slippageBps = 0,
   isApiBackoffActive = false,
+  isLiveMode = true,
 } = {}) {
   try {
     // 1. Check persistent latches
+    // Capital loss breakers (Daily, Consecutive, 7d, Lifetime, Emergency) strictly protect live real-money capital.
+    // Dry-run benchmark simulation is only blocked by operational latches unless isLiveMode is true.
     const status = getCircuitBreakerStatus();
     if (status.isAnyLatched) {
-      const reasons = status.latchedBreakers.map(b => `${b.breakerType}: ${b.tripReason}`).join('; ');
-      return { allowed: false, reason: `CIRCUIT_BREAKER_LATCHED (${reasons})` };
+      const activeBreakers = isLiveMode
+        ? status.latchedBreakers
+        : status.latchedBreakers.filter(b => !['DAILY_LOSS_LIMIT', 'CONSECUTIVE_LOSS_LIMIT', 'ROLLING_7D_LOSS_LIMIT', 'CANARY_LIFETIME_LOSS_LIMIT', 'EMERGENCY_PER_TRADE_LOSS'].includes(b.breakerType));
+      if (activeBreakers.length > 0) {
+        const reasons = activeBreakers.map(b => `${b.breakerType}: ${b.tripReason}`).join('; ');
+        return { allowed: false, reason: `CIRCUIT_BREAKER_LATCHED (${reasons})` };
+      }
     }
 
-    // 2. Operational checks
+    // 2. Operational checks (protects all modes: live and dry-run)
     if (isApiBackoffActive) {
       return { allowed: false, reason: 'API_GATEWAY_BACKOFF_ACTIVE' };
     }
@@ -135,6 +143,11 @@ export function canOpenPositionRiskCheck({
     }
     if (slippageBps > RISK_LIMITS.MAX_SLIPPAGE_BPS) {
       return { allowed: false, reason: `EXCESSIVE_SLIPPAGE (${slippageBps}bps > ${RISK_LIMITS.MAX_SLIPPAGE_BPS}bps)` };
+    }
+
+    // Capital loss circuit breakers (Stage 3 Live Canary real-money limits)
+    if (!isLiveMode) {
+      return { allowed: true };
     }
 
     const currentTime = now();
