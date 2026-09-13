@@ -31,7 +31,7 @@ export async function sendCandidateAlert(candidateId, candidate, decision) {
   db.prepare(`
     INSERT INTO alerts (candidate_id, mint, kind, sent_at_ms, telegram_message_id, payload_json)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(candidateId, candidate.token.mint, 'candidate', now(), sent.message_id, json({ candidate, decision }));
+  `).run(candidateId, candidate.token.mint, 'candidate', now(), sent?.message_id ?? null, json({ candidate, decision }));
 }
 
 export async function sendBatchReveal(batchId, rows, decision, triggerCandidateId) {
@@ -47,7 +47,7 @@ export async function sendBatchReveal(batchId, rows, decision, triggerCandidateI
     decision.selected_mint || rows.find(row => row.id === Number(triggerCandidateId))?.candidate?.token?.mint || 'batch',
     'batch_reveal',
     now(),
-    sent.message_id,
+    sent?.message_id ?? null,
     json({ batchId, candidateIds: rows.map(row => row.id), decision, triggerCandidateId }),
   );
 }

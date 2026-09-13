@@ -294,4 +294,27 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
       db.prepare = originalPrepare;
     }
   });
+
+  it('sendCandidateAlert and sendBatchReveal handle offline/null telegram response without throwing', async () => {
+    const { sendCandidateAlert, sendBatchReveal } = await import('../src/telegram/send.js');
+    const mockCandidate = {
+      token: { mint: 'telegramOfflineMint1111111111111111111', symbol: 'OFFLINE', name: 'Offline' },
+      metrics: { marketCapUsd: 50000, priceUsd: 0.001, liquidityUsd: 10000, gmgnTotalFeesSol: 0, graduatedVolumeUsd: 0, holderCount: 50 },
+      holders: { top20Percent: 20, maxHolderPercent: 5 },
+      savedWalletExposure: { holderCount: 0, checked: 0 },
+      signals: { route: 'trending', label: 'trending' },
+      filters: { passed: true, failures: [] },
+    };
+    const mockDecision = { verdict: 'BUY', confidence: 90, reason: 'test', risks: [] };
+
+    // Should not throw even when bot is unconfigured or returns null
+    await assert.doesNotReject(async () => {
+      await sendCandidateAlert(1, mockCandidate, mockDecision);
+      await sendBatchReveal(1, [{ id: 1, candidate: mockCandidate }], mockDecision, 1);
+    });
+
+    const alert = db.prepare("SELECT * FROM alerts WHERE mint = 'telegramOfflineMint1111111111111111111'").get();
+    assert.ok(alert);
+    assert.strictEqual(alert.telegram_message_id, null);
+  });
 });
