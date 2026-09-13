@@ -5,7 +5,6 @@ import {
   tripCircuitBreaker,
   resetCircuitBreaker,
   getCircuitBreakerStatus,
-  RISK_LIMITS,
 } from '../src/execution/circuitBreakers.js';
 import { db, initDb } from '../src/db/connection.js';
 
@@ -36,18 +35,18 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
   });
 
   it('latches circuit breaker on 3 consecutive losses and blocks entry', () => {
-    // Insert 3 recent consecutive loss positions
+    // Insert 3 recent consecutive loss positions with execution_mode = 'live'
     const ts = Date.now();
     for (let i = 0; i < 3; i++) {
       db.prepare(`
         INSERT INTO dry_run_positions (
           candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
-          trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
-        ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0075, -15.0, '{}')
+          trailing_enabled, trailing_percent, pnl_sol, pnl_percent, execution_mode, snapshot_json
+        ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0075, -15.0, 'live', '{}')
       `).run(ts - (3 - i) * 1000, ts - (3 - i) * 500);
     }
 
-    const res = canOpenPositionRiskCheck();
+    const res = canOpenPositionRiskCheck({ isLiveMode: true });
     assert.equal(res.allowed, false);
     assert.ok(res.reason.includes('CONSECUTIVE_LOSS_LIMIT'));
 
@@ -69,21 +68,45 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
     db.prepare(`
       INSERT INTO dry_run_positions (
         candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
-        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
-      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0260, -52.0, '{}')
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, execution_mode, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0260, -52.0, 'live', '{}')
     `).run(todayTs, todayTs + 1000);
 
-    const res = canOpenPositionRiskCheck();
+    const res = canOpenPositionRiskCheck({ isLiveMode: true });
     assert.equal(res.allowed, false);
     assert.ok(res.reason.includes('DAILY_LOSS_LIMIT'));
 
     resetCircuitBreaker('DAILY_LOSS_LIMIT');
   });
 
-  it('blocks entry when API gateway backoff is active', () => {
-    const res = canOpenPositionRiskCheck({ isApiBackoffActive: true });
-    assert.equal(res.allowed, false);
-    assert.ok(res.reason.includes('API_GATEWAY_BACKOFF_ACTIVE'));
+  it('blocks entry when API gateway backoff is active (both live and dry-run modes)', () => {
+    const liveRes = canOpenPositionRiskCheck({ isApiBackoffActive: true, isLiveMode: true });
+    assert.equal(liveRes.allowed, false);
+    assert.ok(liveRes.reason.includes('API_GATEWAY_BACKOFF_ACTIVE'));
+
+    const dryRunRes = canOpenPositionRiskCheck({ isApiBackoffActive: true, isLiveMode: false });
+    assert.equal(dryRunRes.allowed, false);
+    assert.ok(dryRunRes.reason.includes('API_GATEWAY_BACKOFF_ACTIVE'));
+  });
+
+  it('blocks entry when quote is stale across all modes (live and dry-run)', () => {
+    const liveRes = canOpenPositionRiskCheck({ quoteAgeMs: 35000, isLiveMode: true });
+    assert.equal(liveRes.allowed, false);
+    assert.ok(liveRes.reason.includes('STALE_QUOTE'));
+
+    const dryRunRes = canOpenPositionRiskCheck({ quoteAgeMs: 35000, isLiveMode: false });
+    assert.equal(dryRunRes.allowed, false);
+    assert.ok(dryRunRes.reason.includes('STALE_QUOTE'));
+  });
+
+  it('blocks entry when slippage exceeds threshold across all modes', () => {
+    const liveRes = canOpenPositionRiskCheck({ slippageBps: 600, isLiveMode: true });
+    assert.equal(liveRes.allowed, false);
+    assert.ok(liveRes.reason.includes('EXCESSIVE_SLIPPAGE'));
+
+    const dryRunRes = canOpenPositionRiskCheck({ slippageBps: 600, isLiveMode: false });
+    assert.equal(dryRunRes.allowed, false);
+    assert.ok(dryRunRes.reason.includes('EXCESSIVE_SLIPPAGE'));
   });
 
   it('latches circuit breaker on emergency per-trade loss exceeding 0.005 SOL', () => {
@@ -91,11 +114,11 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
     db.prepare(`
       INSERT INTO dry_run_positions (
         candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
-        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
-      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0060, -24.0, '{}')
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, execution_mode, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0060, -24.0, 'live', '{}')
     `).run(ts - 1000, ts);
 
-    const res = canOpenPositionRiskCheck();
+    const res = canOpenPositionRiskCheck({ isLiveMode: true });
     assert.equal(res.allowed, false);
     assert.ok(res.reason.includes('EMERGENCY_PER_TRADE_LOSS'));
 
@@ -103,16 +126,16 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
   });
 
   it('latches circuit breaker on lifetime canary loss exceeding 0.15 SOL', () => {
-    // Position from 10 days ago (outside daily and 7-day rolling window)
+    // Position from 10 days ago with execution_mode = 'live'
     const tenDaysAgoTs = Date.now() - 10 * 86400000;
     db.prepare(`
       INSERT INTO dry_run_positions (
         candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
-        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
-      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.1600, -80.0, '{}')
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, execution_mode, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.1600, -80.0, 'live', '{}')
     `).run(tenDaysAgoTs - 1000, tenDaysAgoTs);
 
-    const res = canOpenPositionRiskCheck();
+    const res = canOpenPositionRiskCheck({ isLiveMode: true });
     assert.equal(res.allowed, false);
     assert.ok(res.reason.includes('CANARY_LIFETIME_LOSS_LIMIT'));
 
@@ -120,20 +143,35 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
   });
 
   it('latches circuit breaker on rolling 7-day loss exceeding 0.075 SOL', () => {
-    // 2 days ago loss of 0.08 SOL (outside today, but inside 7 days)
+    // 2 days ago loss of 0.08 SOL with execution_mode = 'live'
     const twoDaysAgoTs = Date.now() - 2 * 86400000;
     db.prepare(`
       INSERT INTO dry_run_positions (
         candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
-        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, snapshot_json
-      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0800, -40.0, '{}')
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, execution_mode, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.0800, -40.0, 'live', '{}')
     `).run(twoDaysAgoTs - 1000, twoDaysAgoTs);
 
-    const res = canOpenPositionRiskCheck();
+    const res = canOpenPositionRiskCheck({ isLiveMode: true });
     assert.equal(res.allowed, false);
     assert.ok(res.reason.includes('ROLLING_7D_LOSS_LIMIT'));
 
     resetCircuitBreaker('ROLLING_7D_LOSS_LIMIT');
+  });
+
+  it('ensures dry_run closed losses never trip live real-money circuit breakers', () => {
+    // Insert a massive loss position but with execution_mode = 'dry_run'
+    const ts = Date.now();
+    db.prepare(`
+      INSERT INTO dry_run_positions (
+        candidate_id, mint, status, opened_at_ms, closed_at_ms, size_sol, tp_percent, sl_percent,
+        trailing_enabled, trailing_percent, pnl_sol, pnl_percent, execution_mode, snapshot_json
+      ) VALUES (1, 'lossMint', 'closed', ?, ?, 0.05, 30, -15, 1, 10, -0.5000, -100.0, 'dry_run', '{}')
+    `).run(ts - 1000, ts);
+
+    // Live mode risk check should remain ALLOWED because dry-run trades are excluded from live capital loss limits!
+    const liveCheck = canOpenPositionRiskCheck({ isLiveMode: true });
+    assert.equal(liveCheck.allowed, true, 'Dry-run losses must never trip live real-money circuit breakers');
   });
 
   it('fails closed when database is closed or encounters a query error', () => {

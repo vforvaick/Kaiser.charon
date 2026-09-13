@@ -152,11 +152,11 @@ export function canOpenPositionRiskCheck({
 
     const currentTime = now();
 
-    // 3. Daily realized loss check (since UTC midnight)
+    // 3. Daily realized loss check (since UTC midnight, strictly for live real-money trades)
     const todayStartMs = new Date().setUTCHours(0, 0, 0, 0);
     const dailyTrades = db.prepare(`
       SELECT pnl_sol FROM dry_run_positions
-      WHERE status = 'closed' AND closed_at_ms >= ?
+      WHERE status = 'closed' AND execution_mode = 'live' AND closed_at_ms >= ?
     `).all(todayStartMs);
 
     const dailyLossSol = dailyTrades
@@ -169,10 +169,10 @@ export function canOpenPositionRiskCheck({
       return { allowed: false, reason: `DAILY_LOSS_LIMIT_REACHED (${dailyLossSol.toFixed(4)} SOL)` };
     }
 
-    // 4. Consecutive losses check (last N closed trades)
+    // 4. Consecutive losses check (last N closed live trades)
     const recentTrades = db.prepare(`
       SELECT pnl_sol FROM dry_run_positions
-      WHERE status = 'closed'
+      WHERE status = 'closed' AND execution_mode = 'live'
       ORDER BY closed_at_ms DESC LIMIT ?
     `).all(RISK_LIMITS.MAX_CONSECUTIVE_LOSSES);
 
@@ -184,11 +184,11 @@ export function canOpenPositionRiskCheck({
       }
     }
 
-    // 5. Rolling 7-day loss check
+    // 5. Rolling 7-day loss check (live real-money trades)
     const sevenDaysAgoMs = currentTime - 7 * 86_400_000;
     const rolling7dTrades = db.prepare(`
       SELECT pnl_sol FROM dry_run_positions
-      WHERE status = 'closed' AND closed_at_ms >= ?
+      WHERE status = 'closed' AND execution_mode = 'live' AND closed_at_ms >= ?
     `).all(sevenDaysAgoMs);
 
     const rolling7dLossSol = rolling7dTrades
@@ -201,10 +201,10 @@ export function canOpenPositionRiskCheck({
       return { allowed: false, reason: `ROLLING_7D_LOSS_LIMIT_REACHED (${rolling7dLossSol.toFixed(4)} SOL)` };
     }
 
-    // 6. Lifetime canary cumulative loss check
+    // 6. Lifetime canary cumulative loss check (live real-money trades)
     const lifetimeLossRow = db.prepare(`
       SELECT SUM(pnl_sol) as total_pnl FROM dry_run_positions
-      WHERE status = 'closed'
+      WHERE status = 'closed' AND execution_mode = 'live'
     `).get();
 
     const totalPnl = Number(lifetimeLossRow?.total_pnl) || 0;
