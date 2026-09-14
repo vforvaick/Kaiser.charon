@@ -313,8 +313,12 @@ describe('Ticket 01 (SPEC-005): Runtime Risk Controls & Circuit Breakers', () =>
       await sendBatchReveal(1, [{ id: 1, candidate: mockCandidate }], mockDecision, 1);
     });
 
-    const alert = db.prepare("SELECT * FROM alerts WHERE mint = 'telegramOfflineMint1111111111111111111'").get();
-    assert.ok(alert);
-    assert.strictEqual(alert.telegram_message_id, null);
+    const candidateAlert = db.prepare("SELECT * FROM alerts WHERE mint = 'telegramOfflineMint1111111111111111111' AND kind = 'candidate'").get();
+    assert.ok(candidateAlert, 'Candidate alert must be recorded');
+    assert.strictEqual(candidateAlert.telegram_message_id, null, 'Candidate alert telegram_message_id must be null');
+
+    const batchAlert = db.prepare("SELECT * FROM alerts WHERE kind = 'batch_reveal' ORDER BY id DESC LIMIT 1").get();
+    assert.ok(batchAlert, 'Batch reveal alert must be recorded');
+    assert.strictEqual(batchAlert.telegram_message_id, null, 'Batch reveal telegram_message_id must be null');
   });
 });

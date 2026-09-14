@@ -8,6 +8,8 @@ const testDbPath = path.join(tempDir, `charon_test_${Date.now()}_${Math.random()
 
 process.env.DB_PATH = testDbPath;
 process.env.DISABLE_TELEGRAM_POLLING = 'true';
+process.env.TELEGRAM_BOT_TOKEN = '';
+process.env.TELEGRAM_CHAT_ID = '';
 
 // Auto-cleanup on process exit
 process.on('exit', () => {
