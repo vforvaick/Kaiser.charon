@@ -118,6 +118,24 @@ describe('Ticket 02: Top-10 Cumulative Holder Distribution Seam', () => {
 });
 
 describe('Ticket 04: Seed Strategy Registration & Shadow Profiles', () => {
+  it('loads tuned sniper strategy parameters (buy_sell_ratio 1.5, max_mcap 150k)', () => {
+    const strat = settings.strategyById('sniper');
+    assert.ok(strat);
+    assert.equal(strat.min_buy_sell_ratio_1h, 1.5);
+    assert.equal(strat.max_mcap_usd, 150000);
+  });
+
+  it('loads tuned smart_money parameters (tp 35%, sl -15%, trail 10%, size 0.05 SOL)', () => {
+    const strat = settings.strategyById('smart_money');
+    assert.ok(strat);
+    assert.equal(strat.tp_percent, 35);
+    assert.equal(strat.sl_percent, -15);
+    assert.equal(strat.trailing_enabled, true);
+    assert.equal(strat.trailing_percent, 10);
+    assert.equal(strat.position_size_sol, 0.05);
+    assert.equal(strat.max_hold_ms, 14400000);
+  });
+
   it('registers obicle_degen with valid disabled seed config', () => {
     const strat = settings.strategyById('obicle_degen');
     assert.ok(strat, 'obicle_degen strategy registered in db');

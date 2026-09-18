@@ -297,7 +297,7 @@ export function initDb() {
     trending_min_swaps: 0,
     trending_max_rug_ratio: 1,
     trending_max_bundler_rate: 1,
-    min_buy_sell_ratio_1h: 0,
+    min_buy_sell_ratio_1h: 1.5,
     min_buy_sell_ratio_5m: 0,
     position_size_sol: 0.08,
     max_open_positions: 3,
@@ -341,7 +341,7 @@ export function initDb() {
     partial_tp: false,
     partial_tp_at_percent: 0,
     partial_tp_sell_percent: 0,
-    max_hold_ms: 0,
+    max_hold_ms: 14400000,
     use_llm: true,
     llm_min_confidence: 60,
   }), ts);
@@ -352,7 +352,7 @@ export function initDb() {
     require_fee_claim: false,
     token_age_max_ms: 86400000,
     min_mcap_usd: 25000,
-    max_mcap_usd: 1000000,
+    max_mcap_usd: 150000,
     min_fee_claim_sol: 0,
     min_gmgn_total_fee_sol: 0,
     min_holders: 30,
@@ -364,16 +364,16 @@ export function initDb() {
     trending_min_swaps: 100,
     trending_max_rug_ratio: 0.2,
     trending_max_bundler_rate: 0.3,
-    position_size_sol: 0.1,
+    position_size_sol: 0.05,
     max_open_positions: 3,
-    tp_percent: 100,
-    sl_percent: -25,
-    trailing_enabled: false,
-    trailing_percent: 0,
-    partial_tp: true,
-    partial_tp_at_percent: 100,
-    partial_tp_sell_percent: 50,
-    max_hold_ms: 0,
+    tp_percent: 35,
+    sl_percent: -15,
+    trailing_enabled: true,
+    trailing_percent: 10,
+    partial_tp: false,
+    partial_tp_at_percent: 0,
+    partial_tp_sell_percent: 0,
+    max_hold_ms: 14400000,
     use_llm: true,
     llm_min_confidence: 70,
   }), ts);
@@ -408,20 +408,59 @@ export function initDb() {
     partial_tp: false,
     partial_tp_at_percent: 0,
     partial_tp_sell_percent: 0,
-    max_hold_ms: 0,
+    max_hold_ms: 14400000,
     use_llm: false,
     llm_min_confidence: 0,
   }), ts);
 
-  // Idempotent migration for existing database instances: update degen max_mcap_usd to 80k if still at legacy 100k
+  // Idempotent migration for existing database instances: update strategy tuning configs
   try {
+    // 1. Degen max_mcap_usd to 80k and max_hold_ms to 4h (14400000ms)
     const degenRow = db.prepare("SELECT config_json FROM strategies WHERE id = 'degen'").get();
     if (degenRow?.config_json) {
       const cfg = JSON.parse(degenRow.config_json);
-      if (cfg.max_mcap_usd === 100000) {
-        cfg.max_mcap_usd = 80000;
-        db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'degen'").run(JSON.stringify(cfg));
+      let changed = false;
+      if (cfg.max_mcap_usd === 100000 || cfg.max_mcap_usd === 0) { cfg.max_mcap_usd = 80000; changed = true; }
+      if (!cfg.max_hold_ms) { cfg.max_hold_ms = 14400000; changed = true; }
+      if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'degen'").run(JSON.stringify(cfg));
+    }
+
+    // 2. Sniper buy_sell_ratio_1h to 1.5 and max_mcap to 150k
+    const sniperRow = db.prepare("SELECT config_json FROM strategies WHERE id = 'sniper'").get();
+    if (sniperRow?.config_json) {
+      const cfg = JSON.parse(sniperRow.config_json);
+      let changed = false;
+      if (!cfg.min_buy_sell_ratio_1h) { cfg.min_buy_sell_ratio_1h = 1.5; changed = true; }
+      if (!cfg.max_mcap_usd) { cfg.max_mcap_usd = 150000; changed = true; }
+      if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'sniper'").run(JSON.stringify(cfg));
+    }
+
+    // 3. Smart Money TP to 35% with trailing 10% and 0.05 SOL size
+    const smRow = db.prepare("SELECT config_json FROM strategies WHERE id = 'smart_money'").get();
+    if (smRow?.config_json) {
+      const cfg = JSON.parse(smRow.config_json);
+      let changed = false;
+      if (cfg.tp_percent === 100) {
+        cfg.tp_percent = 35;
+        cfg.sl_percent = -15;
+        cfg.trailing_enabled = true;
+        cfg.trailing_percent = 10;
+        cfg.partial_tp = false;
+        changed = true;
       }
+      if (cfg.position_size_sol === 0.1) { cfg.position_size_sol = 0.05; changed = true; }
+      if (!cfg.max_hold_ms) { cfg.max_hold_ms = 14400000; changed = true; }
+      if (cfg.max_mcap_usd === 1000000) { cfg.max_mcap_usd = 150000; changed = true; }
+      if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'smart_money'").run(JSON.stringify(cfg));
+    }
+
+    // 4. Dip Buy max_hold_ms to 4h
+    const dipRow = db.prepare("SELECT config_json FROM strategies WHERE id = 'dip_buy'").get();
+    if (dipRow?.config_json) {
+      const cfg = JSON.parse(dipRow.config_json);
+      let changed = false;
+      if (!cfg.max_hold_ms) { cfg.max_hold_ms = 14400000; changed = true; }
+      if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'dip_buy'").run(JSON.stringify(cfg));
     }
   } catch {
     // ignore
