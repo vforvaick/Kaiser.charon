@@ -56,6 +56,7 @@ describe('Ticket 01 & SPEC-005: Canonical Degen Strategy Profile', () => {
     assert.equal(strat.trailing_percent, 10);
     assert.equal(strat.position_size_sol, 0.05);
     assert.equal(strat.max_open_positions, 5);
+    assert.equal(strat.max_hold_ms, 14400000);
   });
 
   it('rejects candidates below $25k mcap when degen is active', () => {
@@ -134,6 +135,13 @@ describe('Ticket 04: Seed Strategy Registration & Shadow Profiles', () => {
     assert.equal(strat.trailing_percent, 10);
     assert.equal(strat.position_size_sol, 0.05);
     assert.equal(strat.max_hold_ms, 14400000);
+  });
+
+  it('loads tuned dip_buy parameters (max_hold 4h, max_mcap 500k)', () => {
+    const strat = settings.strategyById('dip_buy');
+    assert.ok(strat);
+    assert.equal(strat.max_hold_ms, 14400000);
+    assert.equal(strat.max_mcap_usd, 500000);
   });
 
   it('registers obicle_degen with valid disabled seed config', () => {

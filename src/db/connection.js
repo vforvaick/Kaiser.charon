@@ -285,7 +285,7 @@ export function initDb() {
     require_fee_claim: false,
     token_age_max_ms: 0,
     min_mcap_usd: 25000,
-    max_mcap_usd: 0,
+    max_mcap_usd: 150000,
     min_fee_claim_sol: 0,
     min_gmgn_total_fee_sol: 0,
     min_holders: 30,
@@ -420,8 +420,8 @@ export function initDb() {
     if (degenRow?.config_json) {
       const cfg = JSON.parse(degenRow.config_json);
       let changed = false;
-      if (cfg.max_mcap_usd === 100000 || cfg.max_mcap_usd === 0) { cfg.max_mcap_usd = 80000; changed = true; }
-      if (!cfg.max_hold_ms) { cfg.max_hold_ms = 14400000; changed = true; }
+      if (cfg.max_mcap_usd === 100000) { cfg.max_mcap_usd = 80000; changed = true; }
+      if (cfg.max_hold_ms == null) { cfg.max_hold_ms = 14400000; changed = true; }
       if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'degen'").run(JSON.stringify(cfg));
     }
 
@@ -430,8 +430,8 @@ export function initDb() {
     if (sniperRow?.config_json) {
       const cfg = JSON.parse(sniperRow.config_json);
       let changed = false;
-      if (!cfg.min_buy_sell_ratio_1h) { cfg.min_buy_sell_ratio_1h = 1.5; changed = true; }
-      if (!cfg.max_mcap_usd) { cfg.max_mcap_usd = 150000; changed = true; }
+      if (cfg.min_buy_sell_ratio_1h == null) { cfg.min_buy_sell_ratio_1h = 1.5; changed = true; }
+      if (cfg.max_mcap_usd == null || cfg.max_mcap_usd === 0) { cfg.max_mcap_usd = 150000; changed = true; }
       if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'sniper'").run(JSON.stringify(cfg));
     }
 
@@ -449,7 +449,7 @@ export function initDb() {
         changed = true;
       }
       if (cfg.position_size_sol === 0.1) { cfg.position_size_sol = 0.05; changed = true; }
-      if (!cfg.max_hold_ms) { cfg.max_hold_ms = 14400000; changed = true; }
+      if (cfg.max_hold_ms == null) { cfg.max_hold_ms = 14400000; changed = true; }
       if (cfg.max_mcap_usd === 1000000) { cfg.max_mcap_usd = 150000; changed = true; }
       if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'smart_money'").run(JSON.stringify(cfg));
     }
@@ -459,7 +459,7 @@ export function initDb() {
     if (dipRow?.config_json) {
       const cfg = JSON.parse(dipRow.config_json);
       let changed = false;
-      if (!cfg.max_hold_ms) { cfg.max_hold_ms = 14400000; changed = true; }
+      if (cfg.max_hold_ms == null) { cfg.max_hold_ms = 14400000; changed = true; }
       if (changed) db.prepare("UPDATE strategies SET config_json = ? WHERE id = 'dip_buy'").run(JSON.stringify(cfg));
     }
   } catch {
