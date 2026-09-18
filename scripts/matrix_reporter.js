@@ -10,14 +10,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 
 const MATRIX_CELLS = [
-  { id: 'sniper-llm', strategy: 'sniper', useLlm: true, filename: 'sniper_llm.sqlite' },
-  { id: 'sniper-rules', strategy: 'sniper', useLlm: false, filename: 'sniper_rules.sqlite' },
-  { id: 'dip_buy-llm', strategy: 'dip_buy', useLlm: true, filename: 'dip_buy_llm.sqlite' },
-  { id: 'dip_buy-rules', strategy: 'dip_buy', useLlm: false, filename: 'dip_buy_rules.sqlite' },
-  { id: 'smart_money-llm', strategy: 'smart_money', useLlm: true, filename: 'smart_money_llm.sqlite' },
-  { id: 'smart_money-rules', strategy: 'smart_money', useLlm: false, filename: 'smart_money_rules.sqlite' },
-  { id: 'degen-llm', strategy: 'degen', useLlm: true, filename: 'degen_llm.sqlite' },
+  // Active Rules Cells (ADR-0007)
   { id: 'degen-rules', strategy: 'degen', useLlm: false, filename: 'degen_rules.sqlite' },
+  { id: 'sniper-rules', strategy: 'sniper', useLlm: false, filename: 'sniper_rules.sqlite' },
+  { id: 'smart_money-rules', strategy: 'smart_money', useLlm: false, filename: 'smart_money_rules.sqlite' },
+  { id: 'dip_buy-rules', strategy: 'dip_buy', useLlm: false, filename: 'dip_buy_rules.sqlite' },
+
+  // Retired LLM Benchmark Cells (Historical Archive - ADR-0007)
+  { id: 'sniper-llm', strategy: 'sniper', useLlm: true, filename: 'sniper_llm.sqlite', retired: true },
+  { id: 'degen-llm', strategy: 'degen', useLlm: true, filename: 'degen_llm.sqlite', retired: true },
+  { id: 'dip_buy-llm', strategy: 'dip_buy', useLlm: true, filename: 'dip_buy_llm.sqlite', retired: true },
+  { id: 'smart_money-llm', strategy: 'smart_money', useLlm: true, filename: 'smart_money_llm.sqlite', retired: true },
 ];
 
 export function resolveDbPath(cell) {
@@ -69,8 +72,12 @@ export function collectCellMetrics(cell) {
 }
 
 export function generateMatrixReport(metricsList) {
-  const lines = ['📊 <b>8-Cell Benchmark Matrix Report</b>', ''];
-  metricsList.forEach(m => {
+  const lines = ['📊 <b>Kaiser.charon Rules Matrix Report (ADR-0007)</b>', ''];
+  const active = metricsList.filter(m => !m.retired);
+  const retired = metricsList.filter(m => m.retired && m.closed > 0);
+
+  lines.push('🟢 <b>Active Rules Cells:</b>');
+  active.forEach(m => {
     if (!m.exists) {
       lines.push(`• <b>${m.id}</b>: DB missing / not started`);
       return;
@@ -85,6 +92,15 @@ export function generateMatrixReport(metricsList) {
       `  Candidates: ${m.candidates} · Open: ${m.open} · Avg Trade: ${m.avgPnlPct.toFixed(1)}%`,
     ].join('\n'));
   });
+
+  if (retired.length > 0) {
+    lines.push('', '⚪ <b>Retired LLM Benchmark Cells (Final Archive):</b>');
+    retired.forEach(m => {
+      const sign = m.realizedPnlSol >= 0 ? '+' : '';
+      lines.push(`• <b>${m.id}</b>: NAV ${m.navSol.toFixed(3)} SOL (${sign}${m.realizedPnlSol.toFixed(4)} SOL) · ${m.closed} trades · WR ${m.winRate.toFixed(1)}%`);
+    });
+  }
+
   return lines.join('\n\n');
 }
 

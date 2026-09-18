@@ -1,30 +1,30 @@
 ---
 type: meta
 title: "Hot Cache"
-updated: 2026-08-27T07:30:00
+updated: 2026-09-18T15:00:00
 ---
 
 # Recent Context
 
 ## Last Updated
 
-2026-08-27. Landed SPEC-004 (Backtest Revamp), SPEC-005 (Live Canary Risk Controls & Degen Tuning), and ADR-0006.
+2026-09-18. Landed ADR-0007 transitioning Kaiser.charon to a lean 4-cell Rules Matrix and retiring the 4 LLM benchmark cells.
 
 ## Key Recent Facts
 
-- **Live Benchmark Status**: `degen-rules` is the primary advancing candidate: **Realized NAV 1.301 SOL (+30.1% / +0.3011 SOL)** across $N=174$ closed trades.
-- **Degen Mcap Tuning**: Tuned canonical corridor to $25k–$80k, cutting unprofitable upper-bucket drag.
-- **Fail-Closed Circuit Breakers**: Full pre-swap risk controller active in `circuitBreakers.js` (daily loss 0.025 SOL, 3 consecutive losses, 7d loss 0.075 SOL, canary lifetime 0.15 SOL, slippage 500 bps, stale quotes >30s, API backoff).
-- **Telemetry Resolver Online**: Single-worker designated resolution active on `charon-sniper-rules`, accumulating 7,300+ complete forward captures across all cell databases.
-- **4-Stage Promotion Pipeline**: Formally documented in ADR-0006 (`Causal Replay` -> `Forward Shadow` -> `0.025 SOL Canary` -> `Scale-Up`).
+- **Rules Won Head-to-Head (ADR-0007)**: 34-day longitudinal benchmark (37,263 batches) proved Rules decisively beat LLMs on win rate (35.8% vs 18.9%), net PnL (+86.3 SOL vs -0.84 SOL), latency (<5ms vs 8-15s), and operational costs.
+- **Matrix Reduced to 4 Lean Workers**: `ecosystem.matrix.config.cjs` now runs exclusively the 4 tuned rules cells (`degen-rules`, `sniper-rules`, `smart_money-rules`, `dip_buy-rules`), cutting VPS CPU and memory consumption in half.
+- **Comprehensive Strategy Tuning**:
+  - `sniper`: `min_buy_sell_ratio_1h: 1.5`, `max_mcap_usd: 150k` (slashes 52% instant dumps, backtested PnL flip to +1.44 SOL).
+  - `smart_money`: `tp_percent: 35`, `sl_percent: -15`, `trailing: 10%`, `size: 0.05 SOL` (rescues 162 profitable pumps from round-tripping into SL).
+  - `degen` & `dip_buy`: `max_hold_ms: 14400000` (4h timeout prevents dead zombie positions from clogging slots).
+- **Fail-Closed Risk & Telemetry**: Full pre-swap circuit breaker suite in `circuitBreakers.js` and single-process forward mark resolution on `charon-sniper-rules`.
 
 ## Recent Pages Created
 
-- ADRs: `docs/adr/0006-backtesting-revamp-risk-controls-and-degen-tuning.md`
-- Specs: `docs/specs/0002-backtest-system-enhancements.md`, `docs/specs/0003-canary-circuit-breakers-and-telemetry-isolation.md`
-- Modules: `src/execution/circuitBreakers.js`, `src/telemetry/forwardCapture.js`, `src/backtest/portfolioSimulator.js`, `src/backtest/statisticalRigor.js`, `src/backtest/promotionScorecard.js`
+- ADRs: `docs/adr/0007-rules-only-matrix-and-llm-retirement.md`
+- Audits: `scripts/run_promotion_audit.js`, `scripts/run_counterfactual_analysis.js`
 
 ## Active Threads
 
-- Accumulate Stage 2 Forward Shadow sample on `degen-rules` toward $N \ge 250\text{--}300$ trades.
-- Analyze initial forward-capture confusion matrix for false-negative alpha leakage.
+- Monitor the 4-cell tuned rules matrix on VPS `fight-uno` toward Stage 3 Canary qualification.
