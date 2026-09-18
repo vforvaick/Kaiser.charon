@@ -81,3 +81,42 @@ test('generateMatrixReport formats Realized NAV, open position note, and outlier
   assert.ok(report.includes('Closed: 10 · Win Rate: 60.0% · Wins: 6'));
   assert.ok(report.includes('Outlier: 1 win = +95.56 SOL'));
 });
+
+test('generateMatrixReport formats retired LLM benchmark cells in final archive section', () => {
+  const metrics = [
+    {
+      id: 'degen-rules',
+      useLlm: false,
+      exists: true,
+      navSol: 1.20,
+      realizedPnlSol: 0.20,
+      open: 0,
+      closed: 50,
+      winRate: 40.0,
+      wins: 20,
+      candidates: 100,
+      avgPnlPct: 1.5,
+      isOutlierDominated: false,
+      retired: false,
+    },
+    {
+      id: 'sniper-llm',
+      useLlm: true,
+      exists: true,
+      navSol: 0.60,
+      realizedPnlSol: -0.40,
+      open: 0,
+      closed: 36,
+      winRate: 19.4,
+      wins: 7,
+      candidates: 500,
+      avgPnlPct: -14.0,
+      isOutlierDominated: false,
+      retired: true,
+    },
+  ];
+  const report = generateMatrixReport(metrics);
+  assert.ok(report.includes('Active Rules Cells:'));
+  assert.ok(report.includes('Retired LLM Benchmark Cells (Final Archive):'));
+  assert.ok(report.includes('<b>sniper-llm</b>: NAV 0.600 SOL (-0.4000 SOL) · 36 trades · WR 19.4%'));
+});
