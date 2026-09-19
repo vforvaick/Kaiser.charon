@@ -1,3 +1,14 @@
+## [2026-09-18] ingest | Degen Strategy Profile, Failure Modes & ADR-0007 LLM Retirement
+
+- Sources:
+  - SQLite dry-run databases (4,500+ trades on `sniper_rules`, `smart_money_rules`, `degen_rules`, `dip_buy_rules`)
+  - `docs/adr/0007-rules-only-matrix-and-llm-retirement.md`
+- Concepts Created & Updated:
+  - [[wiki/concepts/Degen-Rules-Strategy-Profile]]: Full analysis of 252 trades (+13.4% net portfolio gain, timespan 39.7d / 22 active days, Phase 1 vs Phase 2).
+  - [[wiki/concepts/Memecoin-Strategy-Failure-Modes]]: Detailed post-mortem of why smart_money (100% TP flaw) and sniper (unfiltered top-chasing) failed.
+  - [[wiki/thesis/LLM-vs-Rules-Alpha-Hypothesis]]: Formally updated to resolved/rejected per ADR-0007 (Rules beat LLM 35.8% vs 18.9% WR).
+- Key Insight: Documented empirical failure archetypes and established data-driven tuning paths for active rules strategies.
+
 ## [2026-08-25] ingest | Telegram Export, Upstream Charon & Kaiser.charon Fork
 
 - Sources:

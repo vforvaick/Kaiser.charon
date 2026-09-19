@@ -34,6 +34,7 @@ The 4 LLM benchmark cells were retired after a 34-day longitudinal study proved 
 ## Where decisions live
 
 ADRs in `docs/adr/`:
+
 - 0001: 8-cell benchmark matrix architecture
 - 0002: deployment/LLM wiring and Doppler secrets
 - 0003: data-grounded tuning round 1
